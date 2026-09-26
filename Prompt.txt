@@ -1,0 +1,2839 @@
+# XEROXEASE — PREMIUM FULL-STACK WEB APPLICATION MASTER PROMPT
+
+You are an elite multidisciplinary product engineering team consisting of:
+
+* Principal Full-Stack Engineer
+* Senior React/Next.js Architect
+* Backend Security Architect
+* Database Architect
+* DevSecOps Engineer
+* UI/UX Director
+* Motion/Interaction Designer
+* 3D Web Designer
+* Accessibility Engineer
+* Payment Integration Engineer
+* Cloud/Infrastructure Engineer
+* AI/Document Processing Engineer
+* QA/Testing Engineer
+
+Your task is to design and build a **production-grade, secure, premium, highly animated full-stack web application called "XeroxEase — Efficient Document Solutions."**
+
+This is NOT a simple college CRUD project.
+
+Treat XeroxEase as a real-world document-printing platform that can eventually serve hundreds or thousands of college students.
+
+The application solves this problem:
+
+Students, especially hostel students, often cannot reach a Xerox/printing center at the right time. XeroxEase allows them to upload documents remotely, configure printing requirements, make payment using a secure QR/scanner-based payment flow, track their order, and collect the completed documents.
+
+The application must be:
+
+* Premium
+* Modern
+* Fast
+* Mobile-first
+* Accessible
+* Highly interactive
+* Motion-rich
+* 3D-enhanced
+* Production-oriented
+* Security-first
+* Maintainable
+* Scalable
+* Responsive
+* SEO-friendly for public pages
+* Extremely easy for students to use
+* Extremely easy for Xerox administrators to operate
+
+**Do NOT build a fake frontend prototype.**
+
+Build a genuine full-stack architecture with:
+
+* Frontend
+* Backend/API
+* Supabase PostgreSQL database
+* Prisma ORM
+* Authentication
+* Authorization
+* Private file storage
+* AI document analysis
+* QR/scanner-based payment workflow
+* Order management
+* Notifications
+* Feedback and ratings
+* Audit logging
+* Security controls
+* Admin functionality
+* Testing
+
+---
+
+# 1. BRAND IDENTITY
+
+Brand:
+
+**XeroxEase**
+
+Tagline:
+
+**"Efficient Document Solutions"**
+
+Use the user-provided XeroxEase logo as the official brand logo.
+
+Do not redesign or replace the logo.
+
+Use the uploaded logo throughout the application where appropriate:
+
+* Landing page
+* Navbar
+* Authentication screens
+* Student dashboard
+* Admin dashboard
+* Invoice
+* Loading states
+* Favicon/app icon where appropriate
+
+Use the user-provided intro animation/video as the opening visual experience.
+
+Do not fabricate a different brand identity.
+
+The visual identity should primarily use:
+
+* Deep navy blue
+* White
+* Silver/metallic accents
+* Very subtle blue highlights
+* Premium glass surfaces
+* Soft gradients
+* High-contrast typography
+
+Do NOT make the interface childish, cartoonish, or like a generic college project.
+
+The visual language should feel comparable to a premium modern technology startup.
+
+---
+
+# 2. CORE DESIGN PHILOSOPHY
+
+The website should communicate:
+
+**"Printing made effortless."**
+
+The interface should feel:
+
+* Intelligent
+* Reliable
+* Fast
+* Sophisticated
+* Trustworthy
+* Clean
+* Premium
+
+Use visual hierarchy instead of excessive decoration.
+
+DO NOT overload every section with animations.
+
+Animation must support usability.
+
+Use:
+
+* Smooth spring animations
+* Scroll-triggered reveals
+* Parallax
+* Magnetic buttons
+* 3D card interactions
+* Floating document elements
+* Depth
+* Micro-interactions
+* Smooth page transitions
+* Subtle particle effects
+* Sophisticated hover states
+* Animated progress indicators
+* Skeleton loading
+* Number counters
+* Fluid transitions
+
+Use animation restraint.
+
+The application should remain fully usable when animations are disabled.
+
+---
+
+# 3. MOTION DESIGN
+
+Create a premium motion system using an appropriate combination of:
+
+* Framer Motion
+* GSAP where necessary
+* Three.js / React Three Fiber only where genuinely useful
+
+Do not use heavy 3D everywhere.
+
+The motion system should include:
+
+## Landing Page
+
+The uploaded intro animation should appear as the opening experience.
+
+Sequence:
+
+1. Application loads
+2. XeroxEase intro animation appears
+3. Logo/brand identity becomes visible
+4. Smooth transition into landing page
+5. Hero content enters with staggered animation
+6. Floating document elements subtly move in the background
+
+Provide:
+
+* Skip Intro
+* Reduced Motion compatibility
+* Mobile optimization
+
+Do not force users to watch the animation repeatedly.
+
+Store an appropriate local/session preference so returning users can enter the application quickly.
+
+## Page Transitions
+
+Use smooth transitions between major application pages.
+
+Avoid long transitions.
+
+Default animation duration should generally remain approximately:
+
+**150ms–700ms**, depending on interaction importance.
+
+## Buttons
+
+Buttons should have:
+
+* Hover depth
+* Press feedback
+* Loading states
+* Success states
+* Error states
+* Keyboard focus states
+
+## Upload Area
+
+Create an elegant drag-and-drop zone with:
+
+* Hover expansion
+* Drag-over glow
+* File acceptance animation
+* Upload progress
+* AI processing state
+* Success state
+* Error state
+
+## Order Tracking
+
+Create an animated order timeline:
+
+**Order Placed
+→ Documents Verified
+→ Payment Confirmed
+→ Printing
+→ Quality Check
+→ Ready for Collection
+→ Completed**
+
+The active stage should animate smoothly.
+
+---
+
+# 4. TECHNOLOGY STACK
+
+Use a modern production-ready stack.
+
+## Frontend
+
+* Next.js
+* React
+* TypeScript
+* Tailwind CSS
+
+## UI
+
+* shadcn/ui or equivalent accessible component architecture
+* Lucide icons
+
+## Animation
+
+* Framer Motion
+* GSAP only where beneficial
+* React Three Fiber / Three.js for selected 3D experiences
+
+## Backend
+
+Use:
+
+* Next.js server-side APIs OR a clean separate Node.js backend
+* TypeScript
+
+## Database
+
+**Supabase PostgreSQL**
+
+The database must be designed specifically for easy Supabase setup.
+
+Use:
+
+* Supabase PostgreSQL
+* Prisma ORM
+* Environment-based database configuration
+* Prisma migrations
+* Clear database setup documentation
+* `.env.example`
+* Database seed scripts
+
+The application should be easy for another developer to connect to a new Supabase project without manually modifying application source code.
+
+Do NOT hard-code:
+
+* Supabase URL
+* Database credentials
+* API keys
+* Service-role keys
+* Secrets
+
+Use environment variables.
+
+## Authentication
+
+Use secure server-side authentication/session architecture.
+
+Use:
+
+* Argon2id or another modern password hashing mechanism
+* Secure HTTP-only cookies where appropriate
+* Server-side session validation
+* RBAC
+
+## Storage
+
+Use private object storage compatible with Supabase Storage or S3-compatible storage.
+
+Uploaded documents must never be publicly accessible.
+
+## AI Document Processing
+
+Use an AI/document-processing service or reliable document parser where appropriate.
+
+The AI/document-processing layer must determine the number of pages contained in uploaded documents wherever technically possible.
+
+The server remains the source of truth.
+
+## Payment
+
+Replace the previous online payment-gateway requirement with a:
+
+**QR/Scanner-Based Payment System**
+
+The system must support payment using an administrator-managed payment QR code.
+
+The QR code should be configurable through the authorized dashboard.
+
+Do not hard-code the payment QR image.
+
+---
+
+# 5. APPLICATION ROLES
+
+Implement strict Role-Based Access Control.
+
+Roles:
+
+1. STUDENT
+2. ADMIN
+3. SUPER_ADMIN
+
+Never trust a role supplied by the frontend.
+
+The backend must determine authorization from the authenticated server-side identity.
+
+---
+
+# 6. STUDENT REGISTRATION
+
+Student registration fields:
+
+* Full Name
+* Email
+* Phone Number
+* Registration Number
+* Branch
+* Section
+* Year
+* Password
+* Confirm Password
+
+Optional:
+
+* Profile photo
+* College ID information
+
+Validate every field server-side.
+
+Prevent duplicate:
+
+* Email
+* Phone
+* Registration number
+
+according to configured business rules.
+
+Add email/OTP verification if supported by the environment.
+
+---
+
+# 7. STUDENT LOGIN
+
+Create an elegant animated login page.
+
+Support:
+
+* Email/registration number
+* Password
+* Forgot password
+* Secure password reset
+* Session management
+* Logout
+* Session expiration
+
+Do not expose authentication implementation details to the browser.
+
+Do not store passwords in localStorage.
+
+Do not store sensitive authentication tokens insecurely.
+
+Add rate limiting to login endpoints.
+
+Implement protection against:
+
+* Brute force
+* Credential stuffing
+* Automated login attempts
+* Account enumeration
+
+---
+
+# 8. ADMIN AUTHENTICATION
+
+IMPORTANT:
+
+There must be **NO public Admin Signup page.**
+
+Never allow a user to select:
+
+"I am Admin"
+
+during normal registration.
+
+Admin accounts must be created through a controlled administrative process.
+
+Admin login:
+
+`/admin/login`
+
+Student login:
+
+`/login`
+
+Super Admin must be able to provision additional admins.
+
+Implement:
+
+* Strict RBAC
+* Admin session security
+* Optional mandatory 2FA
+* Audit logging
+* Session expiration
+* Secure logout
+* Suspicious login monitoring
+
+Every privileged administrative action must be logged.
+
+---
+
+# 9. STUDENT DASHBOARD
+
+Create a premium dashboard showing:
+
+* Welcome message
+* Current/active order
+* Recent orders
+* Order status
+* Total orders
+* Notifications
+* Quick "New Order" button
+* Profile
+* Payment information
+* Help/support
+* Feedback/rating section for completed orders
+
+Primary CTA:
+
+**"Create New Order"**
+
+Make the dashboard extremely easy to understand on mobile.
+
+---
+
+# 10. CREATE ORDER FLOW
+
+Create a multi-step order wizard instead of one giant form.
+
+Steps:
+
+1. Upload Documents
+2. AI Document Analysis
+3. Configure Printing
+4. Finishing
+5. Review Order
+6. QR/Scanner Payment
+7. Confirmation
+
+Display a visual progress indicator.
+
+Users must be able to move backward without losing valid data.
+
+---
+
+# 11. DOCUMENT UPLOAD
+
+Supported formats:
+
+* PDF
+* DOC
+* DOCX
+* PPT
+* PPTX
+
+Maximum file size:
+
+**100 MB PER FILE**
+
+Allow multiple files in a single order.
+
+Do not assume a file is safe merely because its extension is allowed.
+
+Implement server-side validation.
+
+Validate:
+
+* Extension
+* MIME type
+* File signature/magic bytes
+* File size
+* File name
+* Content type
+
+Sanitize filenames.
+
+Prevent:
+
+* Path traversal
+* Malicious filenames
+* Executable uploads
+* MIME spoofing
+* Double-extension attacks
+* Zip bombs where relevant
+* Malicious document payloads where scanning is available
+
+Implement malware/virus scanning where infrastructure permits.
+
+Do not store uploaded documents in a publicly accessible directory.
+
+Use private object storage.
+
+Never expose permanent public file URLs.
+
+Use temporary signed URLs after authorization.
+
+---
+
+# 12. AI DOCUMENT PAGE DETECTION
+
+This is a core feature.
+
+After the user uploads documents, the system should automatically analyze the uploaded documents and determine:
+
+* Number of pages
+* File type
+* File size
+* Processing status
+* Any supported document metadata
+
+For PDF files, page count should be determined using reliable server-side document processing.
+
+For DOC/DOCX/PPT/PPTX files, use a reliable document-processing method capable of determining the printable page/slide count where technically possible.
+
+The AI/document-processing layer should assist with document analysis but must NOT blindly invent page counts.
+
+If page count cannot be reliably determined:
+
+Display:
+
+**"Page count could not be automatically determined. Please verify the document or allow an administrator to review it."**
+
+The system should store:
+
+* `pageCount`
+* `pageCountSource`
+* `analysisStatus`
+* `analyzedAt`
+
+Possible page-count sources:
+
+* DOCUMENT_PARSER
+* AI_ANALYSIS
+* ADMIN_VERIFIED
+* USER_CONFIRMED
+
+The server must use the verified page count for pricing.
+
+Users should be able to see the detected page count before submitting the final order.
+
+Administrators should be able to review/correct page count when necessary.
+
+Any manual correction must be recorded in the audit log.
+
+---
+
+# 13. FILE STORAGE ARCHITECTURE
+
+Use:
+
+Browser
+↓
+Secure Upload API
+↓
+Authentication
+↓
+Authorization
+↓
+Validation
+↓
+File Scanning
+↓
+AI/Document Analysis
+↓
+Private Storage
+↓
+Database Metadata
+
+Database should store metadata such as:
+
+* File ID
+* Order ID
+* Original filename
+* Storage key
+* MIME type
+* File size
+* Upload timestamp
+* Processing status
+* Page count
+* Page-count source
+* Analysis timestamp
+
+Do not store large documents directly inside PostgreSQL unless there is a compelling architectural reason.
+
+---
+
+# 14. PRINTING CONFIGURATION
+
+For every order allow:
+
+## Paper Size
+
+* A4
+* Legal
+
+## Colour
+
+REQUIRED
+
+Options:
+
+* Black & White
+* Colour
+
+Do not allow the user to proceed without selecting colour.
+
+## Printing Side
+
+* Single Side
+* Double Side
+
+## Copies
+
+Allow quantity selection.
+
+## Page Selection
+
+* All pages
+* Custom pages
+
+Example:
+
+`1-5, 8, 10-15`
+
+AI/document processing should automatically determine total available pages wherever possible.
+
+---
+
+# 15. FINISHING OPTIONS
+
+Provide multi-select finishing options:
+
+* Staple
+* Spiral Binding
+* Stick File
+
+The user may select multiple options where permitted.
+
+The system must support configurable business rules for incompatible combinations.
+
+Do not hard-code pricing in frontend code.
+
+---
+
+# 16. DYNAMIC PRICING ENGINE
+
+Create a database-driven pricing system.
+
+Example configuration:
+
+* A4 B&W = configurable price/page
+* A4 Colour = configurable price/page
+* Legal B&W = configurable price/page
+* Legal Colour = configurable price/page
+* Staple = configurable price
+* Spiral = configurable price
+* Stick File = configurable price
+
+Super Admin should be able to update pricing.
+
+The frontend must request pricing from the backend.
+
+Never trust price values coming from the client.
+
+The server must recalculate the final order price.
+
+---
+
+# 17. ORDER PRICE CALCULATION
+
+The client may display an estimated price.
+
+However:
+
+**THE SERVER MUST ALWAYS RECALCULATE THE FINAL PRICE.**
+
+Never accept `totalAmount` from the browser as authoritative.
+
+Server calculation should consider:
+
+* Verified page count
+* Paper size
+* Colour
+* Sides
+* Copies
+* Page selection
+* Finishing
+* Applicable fees
+* Discounts if implemented
+* Taxes if applicable
+
+Prevent price manipulation.
+
+---
+
+# 18. QR/SCANNER-BASED ONLINE PAYMENT
+
+Replace the previous Razorpay/payment-gateway implementation with a secure **QR/scanner-based payment workflow**.
+
+The payment system should work as follows:
+
+Student creates order
+↓
+Server calculates final amount
+↓
+Order enters payment-pending state
+↓
+Student sees the configured payment QR code
+↓
+Student scans QR using a payment application
+↓
+Student completes payment
+↓
+Student submits payment confirmation/reference details if required
+↓
+Admin verifies payment
+↓
+Payment is marked verified
+↓
+Order continues processing
+
+The payment QR must NOT be hard-coded.
+
+The payment QR should be stored securely and configurable through the appropriate dashboard.
+
+---
+
+# 19. PAYMENT QR MANAGEMENT
+
+The system must support uploading and updating the payment QR code.
+
+The **Super Admin** must be able to:
+
+* Upload payment QR
+* Replace payment QR
+* Preview current QR
+* Enable/disable payment QR
+* Add payment instructions
+* Configure payment account display information where appropriate
+* View when the QR was last updated
+* View who updated the QR
+
+The QR image must be stored securely.
+
+Do not expose unnecessary administrative information.
+
+The application should display the currently active payment QR to students during payment.
+
+The payment QR should support:
+
+* Mobile display
+* Desktop display
+* Download/open functionality where appropriate
+* Scanner-friendly sizing
+* Clear payment instructions
+
+---
+
+# 20. PAYMENT VERIFICATION
+
+Because this is a QR/scanner-based workflow, do NOT pretend that the system automatically knows that a payment succeeded unless a verified payment integration actually exists.
+
+The system must distinguish between:
+
+* PAYMENT_PENDING
+* PAYMENT_PROOF_SUBMITTED
+* PAYMENT_UNDER_REVIEW
+* PAYMENT_CONFIRMED
+* PAYMENT_REJECTED
+* PAYMENT_FAILED
+
+If the student is required to submit a payment reference/transaction identifier, validate it server-side.
+
+Where payment verification is manual, authorized administrators must be able to:
+
+* Review payment information
+* Verify payment
+* Reject payment
+* Add verification notes
+* View verification timestamp
+* View verifying administrator
+
+Students must never be able to mark their own payment as confirmed.
+
+If a payment API/provider is added later, the architecture should allow integration without redesigning the order system.
+
+---
+
+# 21. PAYMENT SECURITY
+
+Never trust:
+
+* Client payment status
+* Client confirmation
+* Client amount
+* Client order status
+
+The backend must determine the final payment state.
+
+Do not store:
+
+* Card numbers
+* CVV
+* Banking passwords
+* UPI PINs
+* Sensitive banking credentials
+
+Never ask students to upload sensitive banking credentials.
+
+If payment reference numbers are collected, store only what is necessary.
+
+Protect against:
+
+* Fake payment confirmations
+* Duplicate submissions
+* Replay attempts
+* Payment manipulation
+* Unauthorized payment-status changes
+
+All payment-status changes must be authorized and audited.
+
+---
+
+# 22. ORDER MODEL
+
+Every order should have:
+
+* Unique human-readable order number
+* User ID
+* Files
+* Printing configuration
+* Finishing options
+* Verified page counts
+* Pricing breakdown
+* Payment status
+* Order status
+* Cancellation status where applicable
+* Feedback status
+* Created timestamp
+* Updated timestamp
+* Completion timestamp
+
+Example:
+
+`XE-2026-000001`
+
+Ensure order numbers cannot be exploited to access other users' orders.
+
+---
+
+# 23. ORDER STATUS
+
+Implement:
+
+* ORDER_PLACED
+* PAYMENT_PENDING
+* PAYMENT_UNDER_REVIEW
+* PAYMENT_CONFIRMED
+* DOCUMENTS_RECEIVED
+* PROCESSING
+* PRINTING
+* QUALITY_CHECK
+* READY_FOR_COLLECTION
+* COMPLETED
+* CANCELLED
+* FAILED
+
+Only authorized backend operations can change status.
+
+Validate legal status transitions.
+
+Do not allow arbitrary status manipulation from the frontend.
+
+---
+
+# 24. ADMIN ORDER MANAGEMENT
+
+Administrators should be able to:
+
+* View orders
+* Search orders
+* Filter orders
+* Sort orders
+* View customer details
+* Securely access authorized files
+* View print configuration
+* View verified page count
+* Correct page count where necessary
+* View payment status
+* Verify/reject payment
+* Update order status
+* Add administrative notes
+* Cancel orders according to business rules
+* View timestamps
+
+Admin order status updates must be performed through secure server-side APIs.
+
+Every important status modification must be recorded in the audit log.
+
+---
+
+# 25. STUDENT ORDER CANCELLATION
+
+Students must be able to cancel their own orders **only when cancellation is permitted by the current order state and configured business rules.**
+
+For example, cancellation may be permitted while an order is:
+
+* ORDER_PLACED
+* PAYMENT_PENDING
+* PAYMENT_UNDER_REVIEW
+
+Cancellation may become unavailable once printing or fulfillment has begun.
+
+The exact cancellation rules should be configurable.
+
+The backend must enforce cancellation eligibility.
+
+Never rely on hiding the Cancel button in the frontend.
+
+When cancelling an order:
+
+* Update order status transactionally
+* Record cancellation timestamp
+* Record cancellation reason where provided
+* Record actor
+* Notify relevant administrators
+* Notify the student
+* Create an audit log
+
+Do not allow students to cancel another user's order.
+
+---
+
+# 26. ORDER TRACKING
+
+Create a beautiful animated tracking timeline.
+
+Example:
+
+✓ Order Placed
+✓ Payment Confirmed
+✓ Documents Received
+● Printing
+○ Quality Check
+○ Ready for Collection
+○ Completed
+
+Animate the active stage.
+
+Show:
+
+* Order number
+* Estimated completion time
+* Current status
+* Payment status
+* Files
+* Verified page count
+* Printing settings
+
+---
+
+# 27. FEEDBACK AND RATING SYSTEM
+
+After the student's order has been successfully completed/collected, the student should be able to submit feedback.
+
+Feedback must NOT be available for incomplete/cancelled orders unless explicitly configured.
+
+Allow:
+
+* Star rating
+* Written feedback
+* Optional service-quality comments
+
+Example rating:
+
+**1–5 stars**
+
+The student can submit feedback only for their own completed order.
+
+Prevent:
+
+* Duplicate feedback
+* Feedback for another student's order
+* Feedback before order completion
+* Unauthorized feedback modification
+
+The system should store:
+
+* Feedback ID
+* Order ID
+* User ID
+* Rating
+* Comment
+* Created timestamp
+* Updated timestamp where applicable
+
+Administrators should be able to view feedback and ratings.
+
+Super Admin can optionally moderate inappropriate feedback.
+
+---
+
+# 28. ADMIN FEEDBACK ANALYTICS
+
+Provide useful feedback analytics such as:
+
+* Average rating
+* Number of ratings
+* Rating distribution
+* Recent feedback
+* Service-quality trends
+
+Do not expose private student information unnecessarily.
+
+---
+
+# 29. QR CODE COLLECTION
+
+When an order becomes:
+
+**READY_FOR_COLLECTION**
+
+Generate a secure QR-based collection token.
+
+Student sees:
+
+ORDER READY
+
+Order:
+
+`XE-2026-000042`
+
+QR CODE
+
+The admin can scan/verify the QR.
+
+Do NOT put sensitive personal information directly into the QR code.
+
+Use a secure random token or signed verification mechanism.
+
+After verification, the admin can mark the order as:
+
+**COMPLETED**
+
+Prevent QR replay.
+
+---
+
+# 30. INVOICE
+
+Generate a professional invoice/receipt.
+
+Include:
+
+* XeroxEase logo
+* Order number
+* Student information
+* Date
+* Files
+* Page count
+* Printing settings
+* Finishing
+* Price breakdown
+* Payment status
+* Total
+
+Provide:
+
+**"Download Invoice"**
+
+---
+
+# 31. STUDENT ORDER HISTORY
+
+Create:
+
+**My Orders**
+
+Features:
+
+* Search
+* Filter
+* Sort
+* Status filter
+* Date filter
+* Order details
+* Invoice
+* Feedback/rating
+* Reorder
+* Cancellation where eligible
+
+Allow students to quickly reorder previous configurations.
+
+Do not automatically duplicate old documents unless explicitly selected.
+
+---
+
+# 32. REAL-TIME EXPERIENCE
+
+Where appropriate, implement real-time order updates.
+
+For example:
+
+Admin changes:
+
+**PRINTING**
+
+Student interface updates:
+
+**"Your order is now being printed."**
+
+Use:
+
+* WebSockets
+* SSE
+* Supabase Realtime
+* Polling
+
+depending on infrastructure.
+
+Do not introduce unnecessary complexity if polling is sufficient.
+
+---
+
+# 33. SUPABASE ARCHITECTURE
+
+Supabase must be the primary managed backend infrastructure for:
+
+* PostgreSQL database
+* Database connectivity
+* Optional Supabase Storage
+* Optional Supabase Realtime
+
+Use Prisma for application database access where appropriate.
+
+The project must provide a straightforward Supabase setup process.
+
+Provide documentation explaining:
+
+1. Create Supabase project
+2. Obtain database connection string
+3. Configure environment variables
+4. Run Prisma migration
+5. Generate Prisma client
+6. Configure storage bucket if used
+7. Configure required policies
+8. Seed development data
+9. Start application
+
+Provide:
+
+`.env.example`
+
+with placeholders only.
+
+Never commit actual Supabase credentials.
+
+Never expose the Supabase service-role key to the browser.
+
+---
+
+# 34. SUPABASE STORAGE
+
+If Supabase Storage is used:
+
+Create private buckets for:
+
+* Student documents
+* Payment QR
+* Invoices
+* Other protected application assets where necessary
+
+Student documents must never be publicly accessible.
+
+Use server-authorized access and temporary signed URLs.
+
+Apply strict access policies.
+
+Do not expose service-role credentials to client-side code.
+
+---
+
+# 35. DATABASE SECURITY
+
+Use PostgreSQL with Prisma.
+
+Implement:
+
+* Foreign keys
+* Constraints
+* Indexes
+* Unique constraints
+* Transactions
+* Proper cascading rules
+* Soft deletion where appropriate
+
+Use Supabase security capabilities appropriately.
+
+Never expose database credentials to the client.
+
+Use least-privilege access wherever possible.
+
+---
+
+# 36. ADMIN DASHBOARD
+
+Create a completely separate premium admin interface.
+
+Dashboard should include:
+
+* Total orders
+* New orders
+* Processing orders
+* Printing orders
+* Ready orders
+* Completed orders
+* Cancelled orders
+* Revenue
+* Pending payments
+* Payments under review
+* Today's pages
+* Average rating
+* Recent feedback
+* Recent activity
+
+Use charts and data visualization.
+
+Do not sacrifice performance for visual effects.
+
+---
+
+# 37. SUPER ADMIN
+
+Super Admin capabilities:
+
+* Create administrators
+* Disable administrators
+* Manage roles
+* Manage pricing
+* Manage services
+* Upload/update payment QR
+* Configure payment instructions
+* View audit logs
+* View analytics
+* View feedback analytics
+* Configure system settings
+* Configure cancellation rules
+* Configure document retention
+* Configure pricing
+
+Do not allow normal administrators to perform Super Admin operations.
+
+---
+
+# 38. AUDIT LOGGING
+
+Create immutable audit records for privileged actions.
+
+Log events such as:
+
+* Admin login
+* Failed admin login
+* User account changes
+* Price changes
+* Payment QR upload/update
+* Payment verification
+* Payment rejection
+* Order status changes
+* Order cancellation
+* File access
+* Admin creation
+* Admin disabling
+* Page-count correction
+* Feedback moderation
+* Security events
+
+Include:
+
+* Actor ID
+* Action
+* Target resource
+* Timestamp
+* Request metadata where appropriate
+
+Do not log:
+
+* Passwords
+* Payment secrets
+* Authentication tokens
+* UPI PINs
+* Private document contents
+
+---
+
+# 39. SECURITY REQUIREMENTS
+
+Security is a first-class requirement.
+
+Protect against at minimum:
+
+* SQL injection
+* XSS
+* CSRF
+* SSRF
+* IDOR/BOLA
+* Broken access control
+* Authentication attacks
+* Session hijacking
+* Brute force
+* Credential stuffing
+* Rate abuse
+* File upload attacks
+* Path traversal
+* MIME spoofing
+* Clickjacking
+* Open redirects
+* Security misconfiguration
+* Sensitive data exposure
+* Mass assignment
+* Parameter pollution
+* Replay attacks where applicable
+
+Use:
+
+* Parameterized database queries
+* ORM safely configured
+* Server-side validation
+* Strict authorization
+* Secure cookies
+* SameSite cookies
+* CSRF protection where applicable
+* Content Security Policy
+* HSTS
+* X-Content-Type-Options
+* Referrer-Policy
+* Frame protections
+* Rate limiting
+* Request size limits
+* Secure headers
+* Input sanitization
+* Output encoding
+* Dependency auditing
+
+Never implement custom cryptography.
+
+Use established cryptographic libraries.
+
+---
+
+# 40. IDOR / OBJECT AUTHORIZATION
+
+This is CRITICAL.
+
+A user must NEVER be able to access another student's:
+
+* Order
+* File
+* Invoice
+* Payment information
+* Profile
+* Feedback
+
+simply by changing an ID.
+
+Every backend resource request must verify ownership or privileged authorization.
+
+Do not rely on hidden frontend routes.
+
+---
+
+# 41. API SECURITY
+
+Every protected API endpoint must require authentication.
+
+Every endpoint must verify authorization.
+
+Validate:
+
+* Body
+* Query parameters
+* URL parameters
+* Headers where relevant
+
+Implement request-size limits.
+
+Implement rate limits.
+
+Return safe error messages.
+
+Do not expose:
+
+* Stack traces
+* Database errors
+* Internal paths
+* Secrets
+* Authentication details
+
+in production.
+
+---
+
+# 42. ERROR HANDLING
+
+Create professional error states.
+
+Never show raw technical errors to users.
+
+Student sees:
+
+**"Something went wrong. Please try again."**
+
+Developer logs contain detailed diagnostic information.
+
+Implement:
+
+* Error boundaries
+* API error handling
+* Upload failure handling
+* AI-processing failure handling
+* Payment verification failure handling
+* Network retry where appropriate
+* Empty states
+* Loading states
+
+---
+
+# 43. NOTIFICATIONS
+
+Implement in-app notifications.
+
+Examples:
+
+"Your order XE-2026-000042 has been received."
+
+"Your payment is under review."
+
+"Your payment has been confirmed."
+
+"Your documents are currently being printed."
+
+"Your order is ready for collection."
+
+"Your order has been cancelled."
+
+"Please rate your completed XeroxEase order."
+
+Allow users to mark notifications as read.
+
+---
+
+# 44. RESPONSIVE DESIGN
+
+The application must be mobile-first.
+
+Support:
+
+* Mobile
+* Tablet
+* Laptop
+* Desktop
+* Large screens
+
+Do not simply shrink desktop UI.
+
+Create appropriate mobile navigation.
+
+On mobile:
+
+* Bottom navigation where useful
+* Large touch targets
+* Mobile upload
+* Camera/file picker compatibility
+* Upload progress
+* QR payment display
+* Simple order flow
+
+---
+
+# 45. ACCESSIBILITY
+
+Follow WCAG principles.
+
+Implement:
+
+* Keyboard navigation
+* Visible focus states
+* Semantic HTML
+* Proper labels
+* ARIA where needed
+* Screen reader support
+* Sufficient contrast
+* Reduced-motion support
+* Accessible dialogs
+* Accessible dropdowns
+* Accessible forms
+* Error announcements
+
+Respect:
+
+`prefers-reduced-motion`
+
+---
+
+# 46. PERFORMANCE
+
+Do not sacrifice performance for animations.
+
+Implement:
+
+* Code splitting
+* Lazy loading
+* Dynamic imports
+* Image optimization
+* Video optimization
+* Responsive media
+* Caching
+* Database indexes
+* Efficient queries
+* Pagination
+* Virtualization for large lists where necessary
+
+Never load a huge 3D scene on every dashboard page.
+
+Use heavy animation primarily on the landing experience.
+
+---
+
+# 47. LANDING PAGE
+
+Create a stunning premium landing page.
+
+Hero:
+
+**XeroxEase**
+
+**"Efficient Document Solutions"**
+
+Primary CTA:
+
+**"Start Printing"**
+
+Secondary CTA:
+
+**"How It Works"**
+
+Visual concept:
+
+Floating papers/documents around a subtle 3D printing/Xerox-inspired environment.
+
+Sections:
+
+1. Hero
+2. How XeroxEase Works
+3. Upload Documents
+4. AI Page Detection
+5. Customize Printing
+6. Secure QR Payment
+7. Track Your Order
+8. Ready for Collection
+9. Feedback & Ratings
+10. Features
+11. Security
+12. FAQ
+13. CTA
+14. Footer
+
+Keep the page elegant.
+
+---
+
+# 48. 3D DESIGN
+
+Use 3D selectively.
+
+Possible 3D elements:
+
+* Floating documents
+* Paper sheets
+* Abstract document ribbons
+* Printer-inspired abstract geometry
+* Floating UI cards
+* Metallic XeroxEase logo environment
+
+Do not create a physically accurate Xerox machine unless it adds value.
+
+Do not use WebGL for ordinary forms.
+
+Authentication pages should remain fast.
+
+---
+
+# 49. VISUAL COMPONENT SYSTEM
+
+Create reusable components:
+
+* Button
+* Input
+* Select
+* Checkbox
+* Radio
+* Modal
+* Drawer
+* Toast
+* Tooltip
+* FileUploader
+* FileCard
+* DocumentAnalysisCard
+* OrderCard
+* OrderTimeline
+* PaymentQRCard
+* PaymentStatusCard
+* FeedbackForm
+* Rating
+* PricingCard
+* DataTable
+* StatusBadge
+* Notification
+* Skeleton
+* EmptyState
+* ErrorState
+* ConfirmDialog
+
+Do not duplicate components unnecessarily.
+
+---
+
+# 50. DESIGN TOKENS
+
+Create a central design system.
+
+Define:
+
+* Colors
+* Typography
+* Spacing
+* Radius
+* Shadows
+* Animation durations
+* Breakpoints
+* Z-index layers
+
+Avoid random values throughout the codebase.
+
+---
+
+# 51. DARK MODE
+
+Support dark mode if it does not compromise brand identity.
+
+Dark mode should use:
+
+* Deep navy
+* Near-black blue
+* Silver highlights
+* Controlled glow
+
+Avoid excessive neon.
+
+---
+
+# 52. ADMIN DATA TABLE
+
+Admin tables must support:
+
+* Search
+* Filtering
+* Sorting
+* Pagination
+* Status filters
+* Date ranges
+* Payment-status filters
+* Bulk actions where safe
+
+For large datasets, use server-side pagination.
+
+Do not load thousands of orders into the browser.
+
+---
+
+# 53. API ARCHITECTURE
+
+Create clean API endpoints.
+
+Example:
+
+```text
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/logout
+POST /api/auth/forgot-password
+
+GET /api/orders
+POST /api/orders
+GET /api/orders/:id
+PATCH /api/orders/:id/status
+POST /api/orders/:id/cancel
+
+POST /api/uploads
+GET /api/files/:id/download
+
+POST /api/documents/analyze
+GET /api/documents/:id/analysis
+
+GET /api/payment/qr
+POST /api/payment/submit
+PATCH /api/admin/payments/:id/verify
+PATCH /api/admin/payments/:id/reject
+
+GET /api/admin/orders
+GET /api/admin/users
+PATCH /api/admin/pricing
+
+POST /api/orders/:id/feedback
+GET /api/admin/feedback
+```
+
+Use appropriate HTTP methods.
+
+Validate every endpoint.
+
+---
+
+# 54. TESTING
+
+Do not consider the project complete without testing.
+
+Implement:
+
+* Unit tests
+* Integration tests
+* API tests
+* Authentication tests
+* Authorization tests
+* Upload security tests
+* AI page-count tests
+* Payment workflow tests
+* Feedback tests
+* Cancellation tests
+* End-to-end tests
+
+Important security tests:
+
+* Student attempting to access another student's order
+* Student attempting to access another student's file
+* Student attempting to access admin endpoint
+* Admin attempting Super Admin endpoint
+* Manipulated price
+* Invalid file type
+* Oversized file
+* Malicious filename
+* Fake payment confirmation
+* Unauthorized payment verification
+* Duplicate payment submission
+* Unauthorized order cancellation
+* Unauthorized feedback submission
+* Duplicate feedback submission
+* Invalid order status transition
+* Rate-limit bypass attempts
+
+---
+
+# 55. SECURITY TESTING
+
+Perform a security review against OWASP-style risks.
+
+Create:
+
+`SECURITY.md`
+
+Containing:
+
+* Threat model
+* Authentication model
+* Authorization model
+* File security model
+* AI document-processing security
+* QR payment security
+* Secrets management
+* Incident response
+* Logging
+* Backup strategy
+* Data retention
+
+Do not claim the system is "100% secure."
+
+Clearly document remaining deployment risks.
+
+---
+
+# 56. BACKUP AND RECOVERY
+
+Design for:
+
+* Supabase PostgreSQL backups
+* Object storage durability
+* Recovery procedures
+* Audit logs
+* Payment reconciliation
+* Feedback/order data recovery
+
+Document:
+
+* Backup frequency
+* Recovery process
+* Data retention policy
+
+---
+
+# 57. PRIVACY
+
+Only collect information that is actually needed.
+
+Protect:
+
+* Phone numbers
+* Email addresses
+* Registration numbers
+* Uploaded documents
+* Payment references
+* Feedback data
+
+Do not expose student information publicly.
+
+Create:
+
+**Privacy Policy**
+
+and:
+
+**Terms of Service**
+
+page structures.
+
+---
+
+# 58. FILE RETENTION
+
+Do not keep uploaded documents forever without reason.
+
+Implement configurable document retention.
+
+Example:
+
+Completed order files can automatically be deleted after a configurable number of days.
+
+Store order metadata longer if required.
+
+Allow Super Admin to configure retention according to college policy.
+
+---
+
+# 59. ADMIN ANALYTICS
+
+Dashboard analytics:
+
+* Daily orders
+* Weekly orders
+* Monthly orders
+* Revenue
+* Pages printed
+* Colour vs B&W
+* A4 vs Legal
+* Finishing usage
+* Branch-wise demand
+* Peak ordering times
+* Average rating
+* Feedback trends
+* Cancellation rate
+* Payment verification rate
+
+Use clean charts.
+
+Do not make charts unnecessarily animated.
+
+---
+
+# 60. QUEUE MANAGEMENT
+
+Implement optional queue functionality.
+
+Show:
+
+Current orders
+↓
+Printing
+↓
+Quality Check
+↓
+Ready
+
+Estimate completion based on:
+
+* Number of pages
+* Existing queue
+* Current processing capacity
+
+Clearly label estimates as estimates.
+
+---
+
+# 61. SEARCH
+
+Student:
+
+Search own orders.
+
+Admin:
+
+Search:
+
+* Order number
+* Registration number
+* Name
+* Phone
+* Status
+* Payment status
+
+Do not allow unauthorized global search.
+
+---
+
+# 62. SECURITY HEADERS
+
+Configure appropriate production security headers.
+
+Include appropriate controls for:
+
+* Content Security Policy
+* HSTS
+* Referrer Policy
+* X-Content-Type-Options
+* Frame protection
+* Permissions Policy
+
+Do not blindly copy an unsafe CSP.
+
+Build the CSP around actual application requirements.
+
+---
+
+# 63. CODE QUALITY
+
+Use:
+
+* TypeScript strict mode
+* ESLint
+* Prettier
+* Clear folder architecture
+* Meaningful names
+* Reusable components
+* Service/repository separation where appropriate
+* Strong typing
+
+Do not create giant components.
+
+Do not put business logic directly inside UI components.
+
+---
+
+# 64. PROJECT STRUCTURE
+
+Use a scalable structure similar to:
+
+```text
+app/
+components/
+features/
+lib/
+server/
+services/
+repositories/
+db/
+types/
+hooks/
+utils/
+config/
+middleware/
+tests/
+public/
+prisma/
+```
+
+Separate:
+
+* UI
+* Business logic
+* Database
+* Authentication
+* File storage
+* AI/document processing
+* Payments
+* Notifications
+* Feedback
+* Admin functionality
+
+---
+
+# 65. USER EXPERIENCE DETAILS
+
+Every operation must have a clear state.
+
+### Upload
+
+Idle
+→ Uploading
+→ Processing
+→ AI Analysis
+→ Complete
+→ Failed
+
+### Payment
+
+Waiting
+→ QR Displayed
+→ Payment Submitted
+→ Under Review
+→ Confirmed / Rejected
+
+### Order
+
+Created
+→ Payment Confirmed
+→ Processing
+→ Printing
+→ Quality Check
+→ Ready
+→ Completed
+
+### Feedback
+
+Unavailable
+→ Eligible
+→ Submitted
+
+Never leave the user wondering what is happening.
+
+---
+
+# 66. LOADING EXPERIENCE
+
+Use skeleton screens rather than blank pages.
+
+Use:
+
+* Shimmer
+* Progress indicators
+* Button loading states
+* AI processing indicators
+* Payment verification states
+
+Never show a frozen interface.
+
+---
+
+# 67. EMPTY STATES
+
+Examples:
+
+"No orders yet."
+
+"Upload your first document to get started."
+
+"No feedback submitted yet."
+
+"You're all caught up."
+
+Use subtle illustrations/animations.
+
+---
+
+# 68. MICRO-INTERACTIONS
+
+Add tasteful micro-interactions:
+
+* Button press
+* Checkbox selection
+* File upload
+* AI analysis completion
+* Order creation
+* QR payment display
+* Payment confirmation
+* Order status change
+* Notification arrival
+* Feedback submission
+* Star rating
+* Copy order number
+* Download invoice
+
+Success animations should be short and elegant.
+
+---
+
+# 69. MOBILE FILE UPLOAD
+
+Make upload work naturally on phones.
+
+Support:
+
+* File picker
+* Multiple selection where browser supports it
+* PDF/document sharing
+* Upload progress
+* Cancel upload
+* Retry failed upload
+
+Do not make users fight with the upload interface.
+
+---
+
+# 70. MOBILE QR PAYMENT
+
+The payment experience must be optimized for mobile.
+
+When students use mobile:
+
+* Display QR clearly
+* Provide appropriate payment instructions
+* Allow the user to access the QR easily
+* Provide a payment reference submission field where required
+* Clearly show payment status
+* Prevent accidental duplicate payment submissions
+
+The UI should clearly distinguish:
+
+**"Payment Pending"**
+
+from:
+
+**"Payment Confirmed."**
+
+---
+
+# 71. ADMIN MOBILE SUPPORT
+
+Admin dashboard should also work on mobile, but desktop is the primary admin environment.
+
+Important actions such as:
+
+* Updating order status
+* Verifying payment
+* Viewing order information
+* Viewing feedback
+* Reviewing page count
+
+must remain accessible from mobile.
+
+---
+
+# 72. SEO
+
+Public pages should include:
+
+* Metadata
+* Open Graph
+* Twitter/X cards
+* Semantic HTML
+* Proper headings
+* Sitemap
+* Robots configuration
+
+Do not expose private dashboard pages to search engines.
+
+---
+
+# 73. SECURITY OF PRIVATE ROUTES
+
+Private student/admin routes must be protected server-side.
+
+Do NOT rely only on client components.
+
+Authorization must exist at:
+
+* Server
+* API
+* Database/storage access layers where appropriate
+
+---
+
+# 74. DATA VALIDATION
+
+Use a schema validation library such as Zod.
+
+Validate all external input.
+
+Create schemas for:
+
+* Registration
+* Login
+* Order creation
+* Printing options
+* Payment submission
+* Payment verification
+* Pricing
+* Profile updates
+* Feedback
+* Cancellation
+* Admin operations
+
+Never trust client-provided objects.
+
+---
+
+# 75. TRANSACTION SAFETY
+
+Use database transactions when multiple related records must be updated atomically.
+
+Examples:
+
+* Order creation
+* Payment verification
+* Order cancellation
+* Order status transitions
+* Feedback submission
+* Pricing updates
+* Admin operations
+
+Prevent partially created orders.
+
+---
+
+# 76. IDEMPOTENCY
+
+Important operations must be idempotent where appropriate.
+
+Especially:
+
+* Payment submissions
+* Payment verification
+* Order creation retries
+* Notification processing
+* Feedback submission
+
+Do not create duplicate orders/payments/feedback because a request was retried.
+
+---
+
+# 77. RATE LIMITING
+
+Implement different rate limits for:
+
+* Login
+* Registration
+* Password reset
+* File upload
+* AI analysis
+* Payment submission
+* Admin APIs
+* Public APIs
+* Feedback submission
+
+Do not use one global limit for everything.
+
+---
+
+# 78. LOGGING
+
+Use structured server logs.
+
+Log:
+
+* Request ID
+* Endpoint
+* Status
+* Duration
+* Error category
+* Security events
+* AI processing events
+* Payment verification events
+
+Never log:
+
+* Passwords
+* Tokens
+* API secrets
+* UPI PINs
+* Full banking credentials
+* Private document contents
+
+---
+
+# 79. DEVELOPMENT ENVIRONMENT
+
+Provide:
+
+```text
+.env.example
+README.md
+SECURITY.md
+DATABASE.md
+API.md
+SETUP.md
+DEPLOYMENT.md
+SEED.md
+TESTING.md
+```
+
+The documentation must make the project straightforward to configure with a fresh Supabase project.
+
+---
+
+# 80. SUPABASE SETUP REQUIREMENT
+
+The database setup must be intentionally simple.
+
+A developer should be able to:
+
+1. Create a Supabase project.
+2. Copy the required database connection details.
+3. Add them to `.env.local`.
+4. Run Prisma generation.
+5. Run Prisma migrations.
+6. Configure required storage buckets.
+7. Run the seed command.
+8. Start the application.
+
+Do not require manual database-table creation through the Supabase dashboard when Prisma migrations can create the required schema.
+
+Provide clear setup commands.
+
+Never require developers to edit source code to configure database credentials.
+
+---
+
+# 81. DEMO DATA
+
+Create safe development seed data.
+
+Include:
+
+* Student account
+* Admin account
+* Super Admin account
+* Example orders
+* Example pricing
+* Example feedback
+* Development payment QR placeholder
+
+IMPORTANT:
+
+Never put real passwords or production credentials in the repository.
+
+Use clearly documented development-only credentials.
+
+Production must require secure credentials.
+
+---
+
+# 82. FINAL UI QUALITY
+
+The result must NOT look like:
+
+* A basic Bootstrap website
+* A generic dashboard template
+* A college assignment
+* An AI-generated collection of random cards
+* An over-animated gaming site
+
+It should look like a professionally designed product.
+
+Use:
+
+* Whitespace intelligently
+* Consistent typography
+* Subtle depth
+* Deliberate motion
+* Premium transitions
+* Strong visual hierarchy
+
+---
+
+# 83. ACCESSIBILITY + MOTION BALANCE
+
+Motion must never interfere with:
+
+* Reading
+* Clicking
+* Navigation
+* Form completion
+* Accessibility
+
+Respect:
+
+`prefers-reduced-motion`
+
+When reduced motion is enabled:
+
+* Disable parallax
+* Disable unnecessary 3D motion
+* Disable large entrance animations
+* Keep essential state transitions
+
+---
+
+# 84. IMPORTANT SECURITY PRINCIPLE
+
+**NEVER assume the frontend is trusted.**
+
+Everything received from the browser is untrusted.
+
+The server must independently validate:
+
+* User identity
+* Permissions
+* File type
+* File size
+* Page count
+* Order contents
+* Pricing
+* Payment status
+* Feedback
+* Cancellation eligibility
+* Status transitions
+
+---
+
+# 85. IMPORTANT PAYMENT PRINCIPLE
+
+**NEVER trust client-side payment status.**
+
+The student can indicate that payment has been made, but only an authorized verification process can mark the payment as:
+
+**PAYMENT_CONFIRMED**
+
+The QR image itself is only a payment mechanism/display asset.
+
+Do not falsely represent QR scanning as automatic payment verification unless an actual payment provider integration is implemented.
+
+---
+
+# 86. IMPORTANT FILE PRINCIPLE
+
+**NEVER expose uploaded student documents publicly.**
+
+All documents must be private.
+
+Only:
+
+* Authorized student
+* Authorized administrator
+
+may access them.
+
+Use temporary authorized access.
+
+---
+
+# 87. IMPORTANT ADMIN PRINCIPLE
+
+**NEVER expose an admin signup option publicly.**
+
+Admin access must be explicitly provisioned.
+
+Use strict role checks on every administrative endpoint.
+
+---
+
+# 88. IMPORTANT DATABASE PRINCIPLE
+
+**NEVER trust IDs supplied by the client.**
+
+Every resource must be checked against the authenticated user's permissions.
+
+Supabase credentials must never be exposed to the browser except intentionally public client-side configuration such as the Supabase anon/public key, where appropriate.
+
+Never expose the Supabase service-role key.
+
+---
+
+# 89. FINAL ACCEPTANCE TEST
+
+Before declaring the application complete, verify:
+
+## AUTHENTICATION
+
+[ ] Student registration works
+[ ] Student login works
+[ ] Logout works
+[ ] Password reset works
+[ ] Admin login works
+[ ] No public admin signup exists
+[ ] Super Admin works
+[ ] Session security works
+
+## DATABASE
+
+[ ] Supabase PostgreSQL works
+[ ] Prisma connects correctly
+[ ] Prisma migrations work
+[ ] Database setup is documented
+[ ] Seed script works
+[ ] Constraints work
+[ ] Indexes work
+[ ] Transactions work
+
+## FILES
+
+[ ] PDF upload works
+[ ] DOC upload works
+[ ] DOCX upload works
+[ ] PPT upload works
+[ ] PPTX upload works
+[ ] Multiple uploads work
+[ ] 100 MB per-file limit works
+[ ] Invalid files are rejected
+[ ] Private storage works
+[ ] Unauthorized download is blocked
+
+## AI DOCUMENT ANALYSIS
+
+[ ] Uploaded PDF page count is detected
+[ ] Supported documents are analyzed where possible
+[ ] Page count is displayed to the student
+[ ] Page count is stored in database
+[ ] Analysis status is stored
+[ ] Failed analysis has a safe fallback
+[ ] Admin can verify/correct page count
+[ ] Page-count corrections are audited
+[ ] Pricing uses verified page count
+
+## ORDERS
+
+[ ] A4 works
+[ ] Legal works
+[ ] Colour selection is compulsory
+[ ] B&W works
+[ ] Single-side works
+[ ] Double-side works
+[ ] Copies work
+[ ] Page selection works
+[ ] Staple works
+[ ] Spiral works
+[ ] Stick File works
+[ ] Multiple finishing options work where allowed
+[ ] Price is calculated server-side
+[ ] Order creation works
+[ ] Order cancellation works when eligible
+[ ] Unauthorized cancellation is blocked
+
+## QR PAYMENT
+
+[ ] Payment QR displays correctly
+[ ] QR is scanner-friendly
+[ ] Super Admin can upload QR
+[ ] Super Admin can update QR
+[ ] QR is stored securely
+[ ] Payment instructions work
+[ ] Student can submit payment confirmation/reference
+[ ] Payment enters review state
+[ ] Admin can verify payment
+[ ] Admin can reject payment
+[ ] Student cannot confirm own payment
+[ ] Duplicate payment submissions are handled
+[ ] Payment status cannot be forged
+
+## ORDER MANAGEMENT
+
+[ ] Admin receives new orders
+[ ] Admin can view authorized files
+[ ] Admin can view page count
+[ ] Admin can correct page count
+[ ] Admin can update order status
+[ ] Valid status transitions are enforced
+[ ] Invalid transitions are rejected
+[ ] Students see status updates
+
+## FEEDBACK
+
+[ ] Feedback is available after completion
+[ ] Star rating works
+[ ] Written feedback works
+[ ] Duplicate feedback is prevented
+[ ] Unauthorized feedback is blocked
+[ ] Admin can view feedback
+[ ] Super Admin can moderate feedback if configured
+[ ] Rating analytics work
+
+## QR COLLECTION
+
+[ ] Collection QR is generated
+[ ] QR token is secure
+[ ] Admin can verify collection
+[ ] QR replay is prevented
+[ ] Order becomes completed after authorized verification
+
+## ADMIN
+
+[ ] Orders appear in admin dashboard
+[ ] Student details are visible only to authorized admins
+[ ] Files can be accessed securely
+[ ] Order status can be updated
+[ ] Pricing can be managed
+[ ] Payment QR can be managed by Super Admin
+[ ] Users can be managed
+[ ] Audit logs work
+[ ] Super Admin permissions work
+[ ] Feedback can be reviewed
+
+## SECURITY
+
+[ ] IDOR protection tested
+[ ] RBAC tested
+[ ] Rate limiting tested
+[ ] Input validation tested
+[ ] Upload validation tested
+[ ] XSS protection tested
+[ ] SQL injection protection tested
+[ ] CSRF protection appropriate to architecture
+[ ] Secure cookies configured
+[ ] Security headers configured
+[ ] Secrets are not committed
+[ ] Supabase service-role key is never exposed client-side
+[ ] Production errors do not expose internals
+
+## UX
+
+[ ] Mobile responsive
+[ ] Tablet responsive
+[ ] Desktop responsive
+[ ] Keyboard accessible
+[ ] Reduced motion supported
+[ ] Loading states exist
+[ ] Error states exist
+[ ] Empty states exist
+[ ] Payment states exist
+[ ] Upload states exist
+[ ] AI analysis states exist
+[ ] Feedback states exist
+
+---
+
+# 90. IMPLEMENTATION RULE
+
+DO NOT generate everything as one enormous uncontrolled file.
+
+Build the application modularly.
+
+First establish:
+
+1. Architecture
+2. Supabase database schema
+3. Prisma configuration
+4. Authentication
+5. Authorization
+6. Core UI system
+7. Student dashboard
+8. Secure upload system
+9. AI document/page analysis
+10. Order system
+11. QR payment system
+12. Admin system
+13. Order cancellation
+14. Notifications
+15. Feedback/rating system
+16. Security hardening
+17. Testing
+18. Motion/3D polish
+
+The application should remain maintainable after every phase.
+
+---
+
+# 91. DEVELOPMENT PRIORITY
+
+When there is a conflict between:
+
+**Visual effects**
+and
+**Security**
+
+SECURITY WINS.
+
+When there is a conflict between:
+
+**Animation**
+and
+**Performance**
+
+PERFORMANCE WINS.
+
+When there is a conflict between:
+
+**Visual complexity**
+and
+**Accessibility**
+
+ACCESSIBILITY WINS.
+
+When there is a conflict between:
+
+**Frontend convenience**
+and
+**Server-side validation**
+
+SERVER-SIDE SECURITY WINS.
+
+When there is a conflict between:
+
+**AI convenience**
+and
+**Data accuracy**
+
+DATA ACCURACY WINS.
+
+When there is a conflict between:
+
+**Payment convenience**
+and
+**Payment verification**
+
+PAYMENT VERIFICATION WINS.
+
+---
+
+# 92. FINAL OUTPUT REQUIREMENT
+
+Build the actual working full-stack XeroxEase application.
+
+Do not provide only static mockups.
+
+Do not fake API responses in production code.
+
+Do not hard-code authentication.
+
+Do not hard-code order data.
+
+Do not hard-code payment confirmation.
+
+Do not store passwords as plaintext.
+
+Do not expose uploaded files publicly.
+
+Do not create public admin registration.
+
+Do not trust client-side prices.
+
+Do not trust client-side roles.
+
+Do not trust client-side payment status.
+
+Do not trust client-side page counts as the final pricing source.
+
+Do not skip server-side authorization.
+
+Do not claim "100% secure."
+
+Instead, implement strong defense-in-depth security and clearly document deployment requirements.
+
+The database must use **Supabase PostgreSQL** and be straightforward to configure using environment variables and Prisma migrations.
+
+Online payment must use the **administrator-managed QR/scanner payment workflow** rather than the previously specified Razorpay workflow.
+
+The application must automatically analyze uploaded documents and determine page counts wherever technically possible, with safe fallback and administrator verification when automatic detection is unreliable.
+
+Students must be able to cancel eligible orders.
+
+Administrators must be able to update order status.
+
+Students must be able to submit ratings and feedback after successfully receiving/completing their orders.
+
+The final result should feel like a premium production-ready document-printing platform created by an experienced product engineering team.
+
+---
+
+# PRODUCT SUMMARY
+
+**Brand:** XeroxEase
+
+**Tagline:** Efficient Document Solutions
+
+**Primary Experience:**
+
+**Upload → AI Page Detection → Customize → QR Payment → Track → Collect → Rate**
+
+Build it beautifully.
+
+Build it securely.
+
+Build it efficiently.
+
+Build it for real users.
+Build this web application in such away that the colours used for each section  section should be perfect like the colurs used for the Netflix app. this application shoul be build im such a way that this appplicatipm screen should perfectly fit both the pc an mobile interface. they should automatically fit for bothe screens and should look hyper realistic attractive and this should be ready to deploy with full connections . there should be zero errors and zero bugs they should work in the real world users. they should that full control in the hands of the admi9n. the secutrity should be very strong that no hacker can hack this website

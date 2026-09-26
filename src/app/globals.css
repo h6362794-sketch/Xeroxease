@@ -1,0 +1,252 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Electric Indigo theme — deep charcoal base with violet-indigo brand */
+  --bg: #08080f;
+  --bg-elev: #12121d;
+  --bg-card: #16161f;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #f5f5f7;
+  --text-dim: #a1a1aa;
+  --text-faint: #71717a;
+  --brand: #7c5cff;
+  --brand-hover: #8f73ff;
+  --accent: #818cf8;
+  --success: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  scroll-behavior: smooth;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(124, 92, 255, 0.4);
+}
+
+/* Brand-accent scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a32;
+  border-radius: 8px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--brand);
+}
+
+@layer components {
+  .glass {
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02));
+    border: 1px solid var(--border);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  .glass-strong {
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.035));
+    border: 1px solid var(--border-strong);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+  }
+
+  .btn-brand {
+    background: var(--brand);
+    color: #fff;
+    transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .btn-brand:hover {
+    background: var(--brand-hover);
+    box-shadow: 0 8px 30px rgba(124, 92, 255, 0.35);
+  }
+  .btn-brand:active {
+    transform: scale(0.97);
+  }
+
+  .btn-ghost {
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    transition: background 0.18s ease, transform 0.18s ease;
+  }
+  .btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.13);
+  }
+  .btn-ghost:active {
+    transform: scale(0.97);
+  }
+
+  .input {
+    width: 100%;
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    border-radius: 0.65rem;
+    padding: 0.72rem 0.9rem;
+    color: var(--text);
+    font-size: 0.95rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .input::placeholder {
+    color: var(--text-faint);
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.22);
+  }
+
+  .skeleton {
+    background: linear-gradient(90deg, #17171f 25%, #23232e 50%, #17171f 75%);
+    background-size: 400px 100%;
+    animation: shimmer 1.5s infinite linear;
+    border-radius: 0.6rem;
+  }
+
+  .text-gradient {
+    background: linear-gradient(100deg, #fff 30%, #b3b3b8 70%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .brand-gradient-text {
+    background: linear-gradient(100deg, #a78bfa 0%, var(--brand) 45%, #6d8bff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .hero-vignette::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(to top, var(--bg) 0%, transparent 40%),
+      radial-gradient(ellipse at 50% 0%, rgba(124, 92, 255, 0.14), transparent 55%);
+    pointer-events: none;
+  }
+
+  /* ── Aurora: slow-drifting nebula of brand light ── */
+  .aurora {
+    position: absolute;
+    inset: -20%;
+    pointer-events: none;
+    background:
+      radial-gradient(38% 42% at 18% 28%, rgba(124, 92, 255, 0.22), transparent 70%),
+      radial-gradient(32% 38% at 82% 18%, rgba(79, 70, 229, 0.18), transparent 70%),
+      radial-gradient(40% 34% at 70% 78%, rgba(167, 139, 250, 0.13), transparent 70%),
+      radial-gradient(28% 30% at 30% 80%, rgba(109, 139, 255, 0.12), transparent 70%);
+    filter: blur(42px);
+    animation: aurora-shift 22s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+
+  /* ── Subtle blueprint grid for hero/CTA surfaces ── */
+  .grid-pattern {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 30%, transparent 75%);
+  }
+
+  /* ── Animated gradient border for featured cards ── */
+  .glow-ring {
+    position: relative;
+    border: 1px solid transparent;
+    background:
+      linear-gradient(var(--bg-card), var(--bg-card)) padding-box,
+      linear-gradient(120deg, rgba(124, 92, 255, 0.85), rgba(79, 70, 229, 0.55), rgba(167, 139, 250, 0.8), rgba(124, 92, 255, 0.85)) border-box;
+    background-size: 100% 100%, 300% 300%;
+    animation: ring-flow 6s linear infinite;
+    box-shadow: 0 0 34px rgba(124, 92, 255, 0.22), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* ── Sheen sweep for CTA buttons on gradient panels ── */
+  .cta-shine {
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-shine::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -80%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(105deg, transparent, rgba(124, 92, 255, 0.22), transparent);
+    transform: skewX(-20deg);
+    animation: shine-sweep 3.2s ease-in-out infinite;
+  }
+}
+
+@keyframes aurora-shift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(3%, -2%, 0) scale(1.08) rotate(2deg);
+  }
+  100% {
+    transform: translate3d(-2%, 3%, 0) scale(1.04) rotate(-2deg);
+  }
+}
+
+@keyframes ring-flow {
+  0% {
+    background-position: 0% 0%, 0% 50%;
+  }
+  100% {
+    background-position: 0% 0%, 300% 50%;
+  }
+}
+
+@keyframes shine-sweep {
+  0%, 55% {
+    left: -80%;
+  }
+  85%, 100% {
+    left: 130%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

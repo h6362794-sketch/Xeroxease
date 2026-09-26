@@ -1,0 +1,359 @@
+// XeroxEase — Prisma schema
+// Supabase PostgreSQL. Run: npx prisma migrate dev
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------- Enums ----------
+
+enum Role {
+  STUDENT
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum OrderStatus {
+  ORDER_PLACED
+  PAYMENT_PENDING
+  PAYMENT_UNDER_REVIEW
+  PAYMENT_CONFIRMED
+  DOCUMENTS_RECEIVED
+  PROCESSING
+  PRINTING
+  QUALITY_CHECK
+  READY_FOR_COLLECTION
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum PaymentStatus {
+  PAYMENT_PENDING
+  PAYMENT_PROOF_SUBMITTED
+  PAYMENT_UNDER_REVIEW
+  PAYMENT_CONFIRMED
+  PAYMENT_REJECTED
+  PAYMENT_FAILED
+}
+
+enum PageCountSource {
+  DOCUMENT_PARSER
+  AI_ANALYSIS
+  ADMIN_VERIFIED
+  USER_CONFIRMED
+}
+
+enum AnalysisStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  NEEDS_REVIEW
+}
+
+enum UploadStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  PAYMENT_SUBMITTED
+  PAYMENT_CONFIRMED
+  PAYMENT_REJECTED
+  ORDER_STATUS
+  ORDER_READY
+  ORDER_COMPLETED
+  ORDER_CANCELLED
+  FEEDBACK_REQUEST
+  SYSTEM
+}
+
+enum SessionKind {
+  STUDENT
+  ADMIN
+}
+
+// ---------- Models ----------
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  emailNorm    String    @unique @map("email_norm")
+  phone        String?   @unique
+  passwordHash String
+  name         String
+  // Student profile fields
+  regNo        String?   @unique @map("reg_no")
+  branch       String?
+  section      String?
+  year         Int?
+  avatarUrl    String?   @map("avatar_url")
+  collegeIdInfo String?  @map("college_id_info")
+
+  role         Role      @default(STUDENT)
+  isActive     Boolean   @default(true) @map("is_active")
+  emailVerified Boolean  @default(false) @map("email_verified")
+
+  twoFactorSecret String? @map("two_factor_secret")
+  twoFactorEnabled Boolean @default(false) @map("two_factor_enabled")
+
+  failedLoginCount  Int      @default(0) @map("failed_login_count")
+  lockedUntil       DateTime? @map("locked_until")
+  lastLoginAt       DateTime? @map("last_login_at")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  sessions    Session[]
+  orders      Order[]
+  files       UploadedFile[]
+  notifications Notification[]
+  feedback    Feedback[]
+  auditLogs   AuditLog[]  @relation("AuditActor")
+  paymentEvents PaymentEvent[] @relation("PaymentActor")
+  passwordResets PasswordResetToken[]
+
+  @@index([role])
+  @@index([isActive])
+  @@map("users")
+}
+
+model Session {
+  id           String      @id @default(uuid())
+  userId       String      @map("user_id")
+  tokenHash    String      @unique @map("token_hash")
+  kind         SessionKind @default(STUDENT)
+  ip           String?
+  userAgent    String?     @map("user_agent")
+  expiresAt    DateTime    @map("expires_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  revokedAt    DateTime?   @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model PricingConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique // e.g. "A4_BW", "A4_COLOR", "STAPLE"
+  label       String
+  category    String // PRINT | FINISHING
+  unitPrice   Decimal  @db.Decimal(10, 2) @map("unit_price")
+  unit        String   @default("page") // page | item
+  isActive    Boolean  @default(true) @map("is_active")
+  updatedBy   String?  @map("updated_by")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("pricing_config")
+}
+
+model Order {
+  id           String   @id @default(uuid())
+  orderNumber  String   @unique @map("order_number") // XE-2026-000001
+  userId       String   @map("user_id")
+
+  // Print configuration
+  paperSize    String   @map("paper_size") // A4 | LEGAL
+  colorMode    String   @map("color_mode") // BW | COLOR
+  sides        String   @default("SINGLE") // SINGLE | DOUBLE
+  copies       Int      @default(1)
+  pageSelection String  @default("ALL") @map("page_selection") // ALL | CUSTOM
+  customPages  String?  @map("custom_pages") // "1-5, 8, 10-15"
+
+  // Server-verified aggregates
+  totalPages   Int      @map("total_pages") // after page-selection + sides math
+  billablePages Int     @map("billable_pages") // pages * copies (effective)
+  pricePerPage Decimal  @db.Decimal(10, 2) @map("price_per_page")
+  finishingFee Decimal  @db.Decimal(10, 2) @map("finishing_fee")
+  totalAmount  Decimal  @db.Decimal(10, 2) @map("total_amount")
+
+  status       OrderStatus @default(ORDER_PLACED)
+  paymentStatus PaymentStatus @default(PAYMENT_PENDING) @map("payment_status")
+
+  // Payment proof
+  paymentRef   String?  @map("payment_ref")
+  paymentProofAt DateTime? @map("payment_proof_at")
+  paymentVerifiedBy String? @map("payment_verified_by")
+  paymentVerifiedAt DateTime? @map("payment_verified_at")
+  paymentNote  String?  @map("payment_note")
+
+  // Collection token (QR)
+  collectionTokenHash String? @map("collection_token_hash")
+  collectionTokenUsedAt DateTime? @map("collection_token_used_at")
+
+  // Admin
+  adminNotes   String?  @map("admin_notes")
+
+  estimatedCompletionAt DateTime? @map("estimated_completion_at")
+  cancelledAt  DateTime? @map("cancelled_at")
+  cancelledBy  String?  @map("cancelled_by")
+  cancelReason String?  @map("cancel_reason")
+  completedAt  DateTime? @map("completed_at")
+
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  files        UploadedFile[]
+  events       OrderEvent[]
+  feedback     Feedback?
+  payments     PaymentEvent[]
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([createdAt])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+model UploadedFile {
+  id            String   @id @default(uuid())
+  orderId       String?  @map("order_id")
+  uploaderId    String   @map("uploader_id")
+  originalName  String   @map("original_name")
+  storageKey    String   @unique @map("storage_key")
+  mimeType      String   @map("mime_type")
+  sizeBytes     Int      @map("size_bytes")
+  checksum      String?
+  status        UploadStatus @default(PENDING)
+  pageCount     Int?     @map("page_count")
+  pageCountSource PageCountSource? @map("page_count_source")
+  analysisStatus AnalysisStatus @default(PENDING) @map("analysis_status")
+  analysisError String?  @map("analysis_error")
+  analyzedAt    DateTime? @map("analyzed_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  uploader User   @relation(fields: [uploaderId], references: [id])
+
+  @@index([orderId])
+  @@index([uploaderId])
+  @@map("uploaded_files")
+}
+
+model OrderEvent {
+  id        String   @id @default(uuid())
+  orderId   String   @map("order_id")
+  type      String // ORDER_PLACED | STATUS_CHANGE | PAYMENT_SUBMITTED | ...
+  fromStatus String? @map("from_status")
+  toStatus  String?  @map("to_status")
+  message   String?
+  actorId   String?  @map("actor_id")
+  actorRole String?  @map("actor_role")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@map("order_events")
+}
+
+model PaymentEvent {
+  id        String   @id @default(uuid())
+  orderId   String   @map("order_id")
+  actorId   String?  @map("actor_id")
+  actorRole String?  @map("actor_role")
+  type      String // SUBMITTED | VERIFIED | REJECTED
+  amount    Decimal? @db.Decimal(10, 2)
+  reference String?
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  actor User? @relation("PaymentActor", fields: [actorId], references: [id])
+
+  @@index([orderId])
+  @@map("payment_events")
+}
+
+model Feedback {
+  id        String   @id @default(uuid())
+  orderId   String   @unique @map("order_id")
+  userId    String   @map("user_id")
+  rating    Int
+  comment   String?
+  moderation String? // HIDDEN | SHOWN
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("feedback")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  body      String?
+  orderId   String?          @map("order_id")
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?  @map("actor_id")
+  actorRole String?  @map("actor_role")
+  action    String
+  targetType String? @map("target_type")
+  targetId  String?  @map("target_id")
+  metadata  Json?
+  ip        String?
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by")
+
+  @@map("settings")
+}

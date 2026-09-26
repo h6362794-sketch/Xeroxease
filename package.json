@@ -1,0 +1,61 @@
+{
+  "name": "xeroxease",
+  "version": "1.0.0",
+  "private": true,
+  "description": "XeroxEase — Efficient Document Solutions. Premium full-stack document printing platform.",
+  "scripts": {
+    "dev": "node --require ./fs-eisdir-shim.cjs node_modules/next/dist/bin/next dev",
+    "build": "prisma generate && node --require ./fs-eisdir-shim.cjs node_modules/next/dist/bin/next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts",
+    "postinstall": "prisma generate"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@auth/core": "^0.37.0",
+    "@hookform/resolvers": "^3.9.0",
+    "@prisma/client": "^6.5.0",
+    "@tanstack/react-query": "^5.59.0",
+    "argon2": "^0.41.1",
+    "bcryptjs": "^2.4.3",
+    "clsx": "^2.1.1",
+    "docx": "^9.0.2",
+    "dotenv": "^16.4.5",
+    "framer-motion": "^11.11.0",
+    "gsap": "^3.12.5",
+    "lucide-react": "^0.453.0",
+    "mammoth": "^1.8.0",
+    "next": "^14.2.15",
+    "next-themes": "^0.3.0",
+    "pdf-lib": "^1.17.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.1.0",
+    "react-hook-form": "^7.53.0",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.15",
+    "postcss": "^8.4.47",
+    "prisma": "^6.5.0",
+    "tailwindcss": "^3.4.13",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2"
+  }
+}
