@@ -99,6 +99,10 @@ export const adminStatusUpdateSchema = z.object({
   note: z.string().trim().max(500).optional().or(z.literal("")),
 });
 
+export const pageCountConfirmSchema = z.object({
+  pageCount: z.coerce.number().int().min(1, "Page count must be at least 1").max(10000, "Page count is unrealistically large"),
+});
+
 export const pageCorrectionSchema = z.object({
   fileId: z.string().uuid(),
   pageCount: z.coerce.number().int().min(1).max(10000),

@@ -16,7 +16,7 @@ Run: `npm run db:seed` (or `npx tsx prisma/seed.ts`)
 | `SPIRAL` | Spiral Binding | ₹40 |
 | `STICK_FILE` | Stick File | ₹25 |
 
-**Accounts** (Argon2id hashes):
+**Accounts** (Argon2id hashes; only a SHA-256 hash of reset tokens and Argon2id hashes of passwords are ever stored):
 
 | Role | Email | Password |
 |---|---|---|
@@ -40,5 +40,16 @@ The seed is idempotent: pricing and users upsert, demo orders are created only w
 These passwords are **published in the repository for development convenience only**.
 
 - Never reuse them in staging/production.
-- On first production deploy: create accounts via seed → immediately log in and change every password (or create real accounts through the Super Admin console and delete the seeded ones).
+- `npm run db:seed` **refuses** to create accounts with these defaults whenever `NODE_ENV=production`, unless you explicitly set `ALLOW_DEV_SEED=true`.
+- Supply your own values instead:
+  ```bash
+  SEED_STUDENT_PASSWORD="<strong unique value>" \
+  SEED_ADMIN_PASSWORD="<strong unique value, 12+ chars>" \
+  npm run db:seed
+  ```
+  With `NODE_ENV=production` and no `SEED_ADMIN_PASSWORD`, the seed generates a random
+  admin password and **does not print it** — recover access via the forgot-password
+  flow or create the admin through the Super Admin console.
+- The seed prints **account identifiers only**. Passwords are never written to logs or stdout.
+- Demo orders are skipped entirely in production.
 - Production must always use unique, strong credentials — see DEPLOYMENT.md checklist.

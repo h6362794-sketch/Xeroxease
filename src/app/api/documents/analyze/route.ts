@@ -11,7 +11,7 @@ const schema = z.object({ fileId: z.string().uuid() });
 export async function POST(req: Request) {
   return withErrorHandling(async () => {
     const user = await requireUser();
-    const limited = enforceRateLimit(req, RATE_LIMITS.analyze, "analyze");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.analyze, "analyze");
     if (limited) return limited;
 
     const { fileId } = await parseBody(req, schema);

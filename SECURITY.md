@@ -17,8 +17,8 @@ Security is a first-class requirement, prioritized above visual effects and conv
 | Auth attacks | Argon2id hashing, per-IP rate limits, per-account lockout (8 student / 5 admin failures → 15-min lock), generic "Invalid credentials" (no enumeration), timing-safe comparisons |
 | Session hijacking | 256-bit random tokens, stored only as SHA-256 hashes, HTTP-only + SameSite + Secure (prod) cookies, server-side expiry/revocation, revocation on password reset and account disable |
 | Brute force / credential stuffing | Rate limiting + lockout + audit logging of failures |
-| Rate abuse | Per-endpoint sliding-window limits (login, register, upload, analyze, payment, feedback, admin, public) |
-| File upload attacks | Extension allow-list, MIME validation, magic-byte signature checks, double-extension rejection, filename sanitization, path-traversal-safe storage keys (server-generated), 100 MB size cap, private storage |
+| Rate abuse | Per-endpoint sliding-window limits (login, register, upload, analyze, payment, feedback, admin, public, **reset**) with an optional **shared Redis store** (`RATE_LIMIT_STORAGE=redis`) because an in-memory limiter does not protect multi-instance deployments. Store outages **fail closed** unless `RATE_LIMIT_FAIL_OPEN=true` |
+| File upload attacks | Extension allow-list, MIME validation, magic-byte signature checks, double-extension rejection, filename sanitization, path-traversal-safe storage keys (server-generated), declared `Content-Length` checked **before** parsing plus an authoritative check on the received bytes, one-file-per-request, 100 MB cap, orphaned objects cleaned up if the database write fails, private storage |
 | Path traversal | Storage keys generated server-side (UUID + random hex); `storagePath()` resolves and validates against base directory |
 | MIME spoofing | Magic-byte validation catches renamed executables (tested) |
 | Clickjacking | `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` |
@@ -27,14 +27,17 @@ Security is a first-class requirement, prioritized above visual effects and conv
 | Sensitive data exposure | No card/CVV/UPI-PIN data collected; payment refs stored last-4-only in logs; secrets only in env vars |
 | Mass assignment | Zod schemas whitelist exact fields; client never sets role/price/status |
 | Parameter pollution | Zod coerces and validates types; unknown keys dropped |
-| Replay (collection QR) | Single-use tokens: `collection_token_used_at` set atomically on verification |
+| Replay (collection QR) | Single-use tokens: consumption is a **guarded conditional UPDATE** (`collection_token_used_at IS NULL` + status) inside one transaction, so exactly one of N concurrent scans can complete the order |
+| Replay (password reset) | Redemption is a **guarded conditional UPDATE** (`used_at IS NULL AND expires_at > now`) inside one transaction; outstanding sibling tokens are expired and all sessions revoked in the same transaction |
+| Storage data loss | `STORAGE_BACKEND=local` is **refused in production** unless `ALLOW_EPHEMERAL_LOCAL_STORAGE=true`, so uploads cannot silently disappear from an ephemeral filesystem while the database still references them |
+| Unreliable page counts being priced | Heuristic counts (raw-byte PDF `/Type /Page` counting, DOCX page-break counting) return `NEEDS_REVIEW`, never `COMPLETED`; ordering stays blocked until the student or an administrator confirms the count |
 
 ## 2. Authentication model
 
 - **Passwords**: Argon2id (memory-hard) with automatic bcrypt fallback; never logged, never stored plaintext.
 - **Sessions**: opaque 256-bit random tokens in HTTP-only cookies; server-side `sessions` table holds only the SHA-256 hash; TTL via `SESSION_TTL_HOURS`; explicit revocation on logout/reset/disable.
 - **Account lockout**: progressive counters with temporary lock; all failures audited with IP.
-- **Password reset**: single-use, 30-minute, hashed tokens; resets revoke all sessions.
+- **Password reset**: single-use, 30-minute, SHA-256-hashed tokens. Requesting a reset expires any previously issued unused token for that user, and redemption is atomic (conditional UPDATE) so concurrent redemptions cannot both succeed. A successful reset revokes **all** sessions and expires every remaining token for that user. Both the request and the redeem endpoints are rate limited, and every failure mode returns the same message so the endpoint cannot be used to probe which tokens are live.
 - **Admin auth**: separate login endpoint + page (`/admin/login`), stricter lockout, dedicated audit events. **No public admin signup exists anywhere**; admins are provisioned only by Super Admin through the admin console.
 
 ## 3. Authorization model
@@ -47,7 +50,9 @@ Security is a first-class requirement, prioritized above visual effects and conv
 
 ## 4. File security model
 
-- Uploaded documents are written to **private storage** (default: `.data/uploads`, outside any public web root; Supabase Storage private buckets supported).
+- Uploaded documents are written to **private storage**. `STORAGE_BACKEND=local` (default, development only) writes to `.data/uploads`, outside any public web root; `STORAGE_BACKEND=supabase` writes to a single **private** bucket named by `STORAGE_BUCKET` (default `documents`).
+- In production, local storage is **refused** unless `ALLOW_EPHEMERAL_LOCAL_STORAGE=true`. Ephemeral/serverless filesystems lose files between invocations, which would leave orders referencing documents that no longer exist.
+- Storage keys are `sanitizeKeySegment(ownerId)/<timestamp>-<random>-<sanitised name>`: no user-controlled path component, no `..`, no absolute paths, no hidden-file prefixes.
 - Downloads stream through `/api/files/:id/download` after ownership/role verification; every access is audited. There are **no permanent public URLs**.
 - Filenames are sanitized for display; storage names are server-generated.
 - Malware scanning hook: set `ENABLE_MALWARE_SCAN=true` and wire a scanning vendor into the upload pipeline (see `src/app/api/uploads/route.ts`) when infrastructure permits.
@@ -55,8 +60,12 @@ Security is a first-class requirement, prioritized above visual effects and conv
 ## 5. AI/document-processing security
 
 - Analysis runs **server-side** on stored bytes (pdf-lib for PDF; ZIP central-directory + `docProps/app.xml` for DOCX/PPTX).
-- Unparseable documents (legacy OLE2 `.doc/.ppt`, encrypted PDFs) fall back to `NEEDS_REVIEW` — the app **never invents page counts**; admins verify and corrections are audited.
-- Pricing uses only server-verified counts. Client-side estimates are display-only.
+- Authoritative sources are used where they exist: pdf-lib's page tree for PDFs and `ppt/slides/slideN.xml` part counting for PPTX. `docProps/app.xml` (`<Pages>`/`<Slides>`) is used as a secondary source.
+- Heuristic sources are returned as **estimates with `NEEDS_REVIEW`**, never as verified counts: raw-byte `/Type /Page` counting for PDFs that cannot be parsed, and rendered/explicit page-break counting for DOCX with no stored page count.
+- Legacy OLE2 `.doc`/`.ppt` cannot be parsed reliably and always return `NEEDS_REVIEW`.
+- `NEEDS_REVIEW` is not a dead end: the document owner can confirm the count (`PATCH /api/documents/:id/pagecount` → `USER_CONFIRMED`), and administrators can correct it (`PATCH /api/admin/orders/:id/files/:fileId/pagecount` → `ADMIN_VERIFIED`). Both are audited.
+- Order creation rejects any document that is not `COMPLETED`, so an estimate can never be priced.
+- Pricing uses only server-verified counts and is computed exclusively in `src/server/pricing.ts`. Client-side estimates are display-only and the client never submits a price.
 
 ## 6. QR payment security
 
@@ -74,7 +83,8 @@ Security is a first-class requirement, prioritized above visual effects and conv
 
 ## 8. Logging & monitoring
 
-- Structured server logs: endpoint, status, error category; security events (login failures, denied file access) additionally in `audit_logs`.
+- Structured server logs: endpoint, status, error category; unhandled API errors are logged with a generated `requestId` for correlation. Deliberate 4xx errors (validation, ownership, state conflicts) are returned to the client with their real message; unexpected errors are replaced with a generic message so internals are never leaked.
+- Security events (login failures, denied file access, privileged actions) additionally in `audit_logs`.
 - **Never logged**: passwords, tokens, API keys, UPI PINs, banking credentials, document contents.
 - Audit log records: actor, action, target, metadata, IP, timestamp — written best-effort (audit failure never breaks request flow) and viewable by Super Admin.
 
@@ -103,3 +113,19 @@ Honest list — these remain after deploying this codebase:
 - **HTTPS/TLS** termination is your deployment platform's responsibility; HSTS is set in production but only matters behind TLS.
 - **Dependency auditing**: run `npm audit` regularly and keep dependencies patched.
 - **Database access**: the app uses a privileged Postgres role; apply least-privilege per your Supabase setup and rely on application-layer authorization (row-level security is not used because Prisma connects as a trusted server-side principal).
+
+
+## 9. Residual risks and operator responsibilities
+
+These are **not** fixed by the code and must be handled by whoever deploys the app:
+
+1. **Email delivery is unverified.** Password-reset delivery is implemented against a Resend-compatible HTTPS API but has never been exercised against a live provider in this repository. Configure `ENABLE_EMAIL_DELIVERY`, `EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM` and verify a real reset email before relying on it.
+2. **`X-Forwarded-For` is trusted for client IP.** Rate limiting keys on `X-Forwarded-For` / `X-Real-IP`. If the app is exposed directly to the internet (not behind a proxy that overwrites these headers), a client can spoof its IP and bypass per-IP limits. Always deploy behind a trusted proxy (Vercel, nginx with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`, etc.).
+3. **Rate limiting is per-IP.** Users behind one NAT share a bucket; a determined distributed attack is not stopped by these limits alone. Use the shared Redis store and consider a WAF.
+4. **`next/font/google` requires build-time network access.** The build fetches Inter from Google Fonts. In an air-gapped or egress-restricted CI runner the build fails; either allow egress to `fonts.googleapis.com` or self-host the font.
+5. **No malware scanning.** `ENABLE_MALWARE_SCAN` exists as a hook but no scanner is wired in. Uploaded documents are parsed server-side (pdf-lib / zlib inflate), so a scanning vendor is recommended before processing untrusted documents at scale.
+6. **Reverse-proxy body limits.** The app rejects oversized uploads, but the platform and proxy must be configured to match (nginx `client_max_body_size 110M`; note that some serverless platforms cap request bodies far below 100 MB).
+7. **Backups and retention** are the operator's responsibility. Never run `prisma migrate reset` or `prisma db push --force-reset` against production data.
+8. **CSRF** relies on `SameSite=Lax` cookies plus JSON-only state-changing endpoints. If a future endpoint accepts cross-origin form posts or `text/plain` bodies, add an explicit CSRF token.
+
+Run `npm run config:check` with `NODE_ENV=production` before every deploy to catch missing or obviously invalid configuration.

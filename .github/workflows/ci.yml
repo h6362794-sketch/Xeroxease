@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    name: Typecheck, lint, test and build
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
+      DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
+      SESSION_SECRET: "ci-only-secret-value-that-is-at-least-32-chars"
+      NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+      STORAGE_BACKEND: "local"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # `npm ci` runs `prisma generate` via postinstall, so the generated client is
+      # present before typecheck/build. No database is needed for that step.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Dependency audit (high and above)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  migrations:
+    name: Migration check against a clean database
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: xeroxease_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
+      DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
+      SESSION_SECRET: "ci-only-secret-value-that-is-at-least-32-chars"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      # Applies prisma/migrations to an empty database. Fails if the committed
+      # migrations no longer produce the schema in prisma/schema.prisma.
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+      - name: Verify schema matches migrations
+        run: npx prisma migrate status

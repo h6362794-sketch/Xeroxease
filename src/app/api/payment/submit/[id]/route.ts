@@ -9,7 +9,7 @@ import { notify, NOTIFY } from "@/server/notifications";
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   return withErrorHandling(async () => {
     const user = await requireUser();
-    const limited = enforceRateLimit(req, RATE_LIMITS.paymentSubmit, "pay-submit");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.paymentSubmit, "pay-submit");
     if (limited) return limited;
 
     const { id } = params;

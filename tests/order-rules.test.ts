@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ORDER_TRANSITIONS, CANCELLABLE_STATUSES } from "@/lib/constants";
-import { isTransitionAllowed } from "@/server/orders";
+import { isTransitionAllowed } from "@/lib/order-status";
 
 describe("order status machine", () => {
   it("allows payment flow transitions", () => {

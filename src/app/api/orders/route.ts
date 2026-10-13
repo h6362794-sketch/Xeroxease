@@ -57,7 +57,7 @@ export async function POST(req: Request) {
     const user = await requireUser();
     if (user.role !== "STUDENT") return apiError("Only students can create orders.", 403);
 
-    const limited = enforceRateLimit(req, RATE_LIMITS.orderCreate, "order-create");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.orderCreate, "order-create");
     if (limited) return limited;
 
     const data = await parseBody(req, orderConfigSchema);

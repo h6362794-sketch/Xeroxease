@@ -1,30 +1,38 @@
-import { prisma } from "@/lib/prisma";
-import { hashPassword, sha256 } from "@/server/auth";
+import { hashPassword } from "@/server/auth";
 import { resetPasswordSchema } from "@/server/validation";
-import { apiError, json, parseBody, withErrorHandling } from "@/server/api-utils";
+import { apiError, enforceRateLimit, json, parseBody, withErrorHandling } from "@/server/api-utils";
+import { RATE_LIMITS } from "@/server/rate-limit";
 import { audit } from "@/server/audit";
+import { redeemPasswordResetToken } from "@/server/password-reset";
 
 export async function POST(req: Request) {
   return withErrorHandling(async () => {
+    // This endpoint was previously unthrottled, so a leaked token could be brute
+    // forced and the endpoint itself could be hammered.
+    const limited = await enforceRateLimit(req, RATE_LIMITS.resetPassword, "reset");
+    if (limited) return limited;
+
     const data = await parseBody(req, resetPasswordSchema);
-
-    const record = await prisma.passwordResetToken.findUnique({
-      where: { tokenHash: sha256(data.token) },
-    });
-    if (!record || record.usedAt || record.expiresAt < new Date()) {
-      return apiError("This reset link is invalid or has expired. Please request a new one.", 400);
-    }
-
     const { hash } = await hashPassword(data.password);
 
-    await prisma.$transaction([
-      prisma.user.update({ where: { id: record.userId }, data: { passwordHash: hash, failedLoginCount: 0, lockedUntil: null } }),
-      prisma.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
-      // Revoke all existing sessions for safety.
-      prisma.session.updateMany({ where: { userId: record.userId }, data: { revokedAt: new Date() } }),
-    ]);
+    const result = await redeemPasswordResetToken(data.token, hash);
 
-    await audit({ actorId: record.userId, action: "PASSWORD_RESET_COMPLETED", targetType: "USER", targetId: record.userId });
+    // Identical response for unknown, expired, malformed and already-used tokens so
+    // the endpoint cannot be used to probe which tokens are live.
+    if (!result.ok) {
+      return apiError(
+        "This reset link is invalid or has expired. Please request a new one.",
+        400,
+        "RESET_TOKEN_INVALID"
+      );
+    }
+
+    await audit({
+      actorId: result.userId,
+      action: "PASSWORD_RESET_COMPLETED",
+      targetType: "USER",
+      targetId: result.userId,
+    });
 
     return json({ ok: true });
   });

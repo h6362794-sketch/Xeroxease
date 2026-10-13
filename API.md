@@ -77,3 +77,23 @@ Rate limits (per IP, per bucket): login 10/5min · register 5/h · forgot 3/15mi
 | GET | `/pricing` | Active price table (display only; server remains authoritative). |
 | GET | `/invoices/:id` | Owner/ADMIN; printable HTML invoice (print to PDF). |
 | GET | `/notifications` · PATCH | Own notifications; mark read. |
+
+## Added / changed endpoints
+
+### `PATCH /api/documents/:id/pagecount` 🔒
+
+Confirm the page count of one of **your own** documents when automatic analysis was
+inconclusive (`NEEDS_REVIEW`) or failed. Records `USER_CONFIRMED`, sets
+`analysisStatus` to `COMPLETED`, and writes an audit entry.
+
+Body: `{ "pageCount": 1..10000 }`
+
+Rejected when the document is not yours (404), is already attached to an order (409),
+or is still being analyzed (409).
+
+### `POST /api/auth/reset-password` 🌐
+
+Rate limited (5 / 15 min per IP). Redemption is atomic and single-use. Unknown,
+expired, malformed and already-used tokens all return the **same** `400
+RESET_TOKEN_INVALID` response so the endpoint cannot be used to probe live tokens.
+A successful reset revokes every session for that user.

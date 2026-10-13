@@ -8,7 +8,7 @@ import { audit } from "@/server/audit";
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   return withErrorHandling(async () => {
     const user = await requireUser();
-    const limited = enforceRateLimit(req, RATE_LIMITS.feedback, "feedback");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.feedback, "feedback");
     if (limited) return limited;
 
     const { id } = params;

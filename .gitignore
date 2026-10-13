@@ -16,9 +16,6 @@ dist
 build-log.txt
 build-output.log
 dev-server.log
-chunk-hunt.cjs
-fs-eisdir-shim.cjs
-repair-fs.cjs
 .tmp-webpack-test
 
 # misc

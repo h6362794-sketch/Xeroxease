@@ -52,13 +52,16 @@ npm install
 cp .env.example .env.local
 # → Fill in your Supabase PostgreSQL connection string + SESSION_SECRET
 
-# 3. Set up the database (creates schema via Prisma migrations)
-npx prisma migrate dev --name init
+# 3. Validate your configuration (optional but recommended)
+npm run config:check
 
-# 4. Seed development data (demo accounts, pricing, sample orders)
+# 4. Set up the database (applies the committed migrations)
+npx prisma migrate deploy
+
+# 5. Seed development data (demo accounts, pricing, sample orders — dev only)
 npm run db:seed
 
-# 5. Run
+# 6. Run
 npm run dev
 ```
 
@@ -88,9 +91,9 @@ Full setup walkthrough: [`SETUP.md`](SETUP.md) · Database details: [`DATABASE.m
 | Motion | Framer Motion (reduced-motion aware) |
 | Database | Supabase PostgreSQL + Prisma ORM |
 | Auth | Custom sessions (HTTP-only cookies), Argon2id |
-| Storage | Private local directory (default) / Supabase Storage ready |
+| Storage | Private local directory (development) / Supabase Storage (production) |
 | Validation | Zod on every external input |
-| Tests | Vitest (45 unit tests) |
+| Tests | Vitest (100 unit tests) + GitHub Actions CI |
 
 ---
 
@@ -124,8 +127,10 @@ npm start            # Production server
 npm run typecheck    # tsc --noEmit
 npm run lint         # next lint
 npm test             # vitest run
-npm run db:migrate   # prisma migrate dev
+npm run db:migrate   # prisma migrate dev (create a new migration)
 npm run db:deploy    # prisma migrate deploy (production)
+npm run db:status    # prisma migrate status
+npm run config:check # validate environment configuration
 npm run db:seed      # seed development data
 ```
 
@@ -146,5 +151,7 @@ npm run db:seed      # seed development data
 ## Notes
 
 - The payment flow is **QR/scanner-based** with manual admin verification by design (no payment gateway, no card data). The system never auto-confirms payments without a verified integration.
-- Uploaded documents live in **private storage** and are served only via authenticated, ownership-checked endpoints.
+- Uploaded documents live in **private storage** and are served only via authenticated, ownership-checked endpoints. Production requires `STORAGE_BACKEND=supabase` (or an explicit `ALLOW_EPHEMERAL_LOCAL_STORAGE=true`), because ephemeral disks silently lose documents that the database still references.
+- Page counts are only priced when **verified**. Heuristic estimates (raw-byte PDF counting, page-break counting, legacy `.doc`) return an explicit `NEEDS_REVIEW` state that the student or an administrator must confirm before ordering.
+- QR collection is **atomic**: concurrent scans of the same collection code produce exactly one fulfilled order.
 - This project aims for strong defense-in-depth; **no system is "100% secure"** — see SECURITY.md for remaining operational responsibilities.

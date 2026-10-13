@@ -41,20 +41,30 @@ cp .env.example .env.local
 Edit `.env.local`:
 
 ```env
-DATABASE_URL=t=1"
-DIRECT_URL="
+# --- Database ---
+DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:6543/postgres"
+DIRECT_URL="postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres"
 
-NEXT_PUBLIC_SUPABASE_URL="
+# --- Supabase (needed only when STORAGE_BACKEND=supabase) ---
+NEXT_PUBLIC_SUPABASE_URL="https://YOUR_PROJECT_REF.supabase.co"
 NEXT_PUBLIC_SUPABASE_ANON_KEY="<anon-key>"
 SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"   # server only!
 
-SESSION_SECRET="<run: openssl rand -base64 32>"
+# --- Auth / Session ---
+SESSION_SECRET="<run: openssl rand -base64 32>"  # minimum 32 characters
 SESSION_TTL_HOURS="24"
-NEXT_PUBLIC_APP_URL="http://localhost:3000"
 
-STORAGE_BACKEND="local"
+# --- App ---
+NEXT_PUBLIC_APP_URL="http://localhost:3000"      # https URL in production
+
+# --- Storage ---
+STORAGE_BACKEND="local"                          # use "supabase" in production
+STORAGE_BUCKET="documents"
 LOCAL_STORAGE_DIR=".data/uploads"
 ```
+
+> Generate `SESSION_SECRET` with `openssl rand -base64 32` (or any long random string). Never commit `.env.local` — it is gitignored.
+> Validate the whole file at any time with `npm run config:check`.
 
 > Generate `SESSION_SECRET` with `openssl rand -base64 32` (or any long random string). Never commit `.env.local` — it is gitignored.
 
@@ -64,11 +74,20 @@ LOCAL_STORAGE_DIR=".data/uploads"
 
 ```bash
 npm install
-npx prisma migrate dev --name init
-npx prisma generate
+npx prisma migrate deploy     # applies the committed migrations in prisma/migrations/
+npx prisma generate           # regenerates Prisma Client (no database changes)
 ```
 
 This creates all tables (users, sessions, orders, files, pricing, payments, feedback, notifications, audit logs, settings) with constraints and indexes. **No manual table creation in the Supabase dashboard is needed.**
+
+> **Existing database?** If the schema was previously created with `prisma db push`, the tables already exist but there is no migration history. Baseline it once (this only writes a history row — it does **not** modify data):
+>
+> ```bash
+> npx prisma migrate resolve --applied 20261013000000_init
+> npx prisma migrate status
+> ```
+>
+> Use `npx prisma migrate dev` only for local schema changes; it creates a new migration file that you then commit.
 
 ---
 
@@ -78,11 +97,15 @@ If you switch `STORAGE_BACKEND=supabase`, create **private** buckets (no public 
 
 | Bucket | Purpose |
 |---|---|
-| `student-documents` | Uploaded documents (private) |
-| `payment-qr` | Admin-managed payment QR images (private) |
-| `invoices` | Generated invoices (private) |
+| `documents` | Everything the app stores: uploaded documents and the admin-managed payment QR (private) |
 
-Policies: keep buckets fully private and access files only through the app's authorized API routes. Never expose the service-role key client-side.
+Earlier revisions of this guide listed three buckets (`student-documents`, `payment-qr`, `invoices`). **The code has always used a single bucket**, so those extra buckets are not needed and were never read. The bucket name is configurable with `STORAGE_BUCKET` and defaults to `documents`, so an existing deployment keeps working unchanged.
+
+1. Create **one** private bucket named `documents` (disable public access).
+2. Do **not** add permissive RLS/Storage policies — the app reads and writes with the service-role key from the server only.
+3. Keep `SUPABASE_SERVICE_ROLE_KEY` server-side. It is read only from `src/server/storage.ts`.
+
+If you already created objects in a different bucket name, set `STORAGE_BUCKET` to that name instead of moving files.
 
 The default `STORAGE_BACKEND=local` stores files in the private `.data/uploads` directory (gitignored) with authorization-gated streaming — suitable for single-server deployments.
 
@@ -93,6 +116,8 @@ The default `STORAGE_BACKEND=local` stores files in the private `.data/uploads` 
 ```bash
 npm run db:seed
 ```
+
+This is **development-only**. In production the seed refuses to create accounts with the documented default passwords; supply `SEED_STUDENT_PASSWORD` / `SEED_ADMIN_PASSWORD` (12+ characters) or create administrators through the Super Admin console. Seeded demo orders are skipped in production.
 
 Creates: default pricing (A4/Legal × B&W/Colour + finishing), a student, an admin, a Super Admin, two demo orders, one feedback record, and default system settings. See [`SEED.md`](SEED.md) for credentials.
 

@@ -17,8 +17,8 @@ export async function GET() {
       return apiError("Payment QR file is missing.", 410);
     }
 
-    const stream = openStream(settings.paymentQrStorageKey);
-    return new Response(stream as unknown as ReadableStream, {
+    const stream = await openStream(settings.paymentQrStorageKey);
+    return new Response(stream as ReadableStream, {
       headers: {
         "Content-Type": settings.paymentQrMime || "image/png",
         "Cache-Control": "private, max-age=60",

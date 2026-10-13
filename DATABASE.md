@@ -55,11 +55,34 @@ Order 1─1 Feedback            (unique per order)
 
 ## Migrations
 
+The migration history is committed in `prisma/migrations/` and is the source of truth for schema changes.
+
 ```bash
-npx prisma migrate dev --name <name>    # develop (creates migration SQL)
-npx prisma migrate deploy               # production (applies pending migrations)
-npx prisma studio                       # browse data
+npx prisma migrate dev --name <name>    # develop (creates migration SQL — commit the generated file)
+npx prisma migrate deploy               # production (applies pending migrations only)
+npx prisma migrate status               # show which migrations are applied
+npx prisma generate                     # regenerate Prisma Client — makes NO database changes
+npx prisma studio                       # browse data (never expose publicly)
 ```
+
+Keep the two steps separate in CI/CD: `prisma generate` is a build step (needs no database), `prisma migrate deploy` is a release step (needs the database).
+
+### Existing databases (no migration history)
+
+If this schema was previously created with `prisma db push`, the tables exist but `_prisma_migrations` is empty. Running `migrate deploy` would try to recreate them and fail. Baseline it once — this **only records the migration as applied** and modifies no data:
+
+```bash
+npx prisma migrate resolve --applied 20261013000000_init
+npx prisma migrate status     # should report: Database schema is up to date
+```
+
+### Initial migration
+
+`prisma/migrations/20261013000000_init/migration.sql` creates every table, enum, index and foreign key declared in `prisma/schema.prisma`.
+
+### Rollback planning
+
+Prisma migrations are forward-only. To reverse a change, write and commit a **new** migration that undoes it. Never edit an already-applied migration file. Never run `prisma migrate reset`, `prisma db push --force-reset` or `DROP TABLE` against production data.
 
 Connection config uses `DATABASE_URL` (runtime, pooler-friendly) and `DIRECT_URL` (migrations) — see `.env.example`.
 

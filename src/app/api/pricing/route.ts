@@ -4,7 +4,7 @@ import { RATE_LIMITS } from "@/server/rate-limit";
 
 export async function GET(req: Request) {
   return withErrorHandling(async () => {
-    const limited = enforceRateLimit(req, RATE_LIMITS.publicApi, "pricing");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.publicApi, "pricing");
     if (limited) return limited;
 
     const rows = await prisma.pricingConfig.findMany({ where: { isActive: true }, orderBy: [{ category: "asc" }, { label: "asc" }] });
