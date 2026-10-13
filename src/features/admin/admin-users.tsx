@@ -5,7 +5,7 @@ import { Button, Card, EmptyState, Input, Label, Modal, Select, Skeleton, Badge 
 import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api-client";
 import { formatDateShort } from "@/lib/utils";
-import { Search, UserPlus, Ban, CheckCircle2 } from "lucide-react";
+import { Search, UserPlus, Ban, CheckCircle2, KeyRound } from "lucide-react";
 
 interface UserRow {
   id: string;
@@ -29,6 +29,7 @@ export function AdminUsers({ canManage }: { canManage: boolean }) {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [recoveryTarget, setRecoveryTarget] = useState<UserRow | null>(null);
   const toast = useToast();
 
   const load = useCallback(async () => {
@@ -121,13 +122,21 @@ export function AdminUsers({ canManage }: { canManage: boolean }) {
                   </td>
                   <td className="px-4 py-3 text-xs text-zinc-500">{formatDateShort(u.createdAt)}</td>
                   {canManage && (
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
                       <Button
                         size="sm" variant="ghost"
                         onClick={() => toggleActive(u)}
                         icon={u.isActive ? <Ban className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                       >
                         {u.isActive ? "Disable" : "Enable"}
+                      </Button>
+                      <Button
+                        size="sm" variant="ghost"
+                        className="ml-1"
+                        onClick={() => setRecoveryTarget(u)}
+                        icon={<KeyRound className="h-3.5 w-3.5" />}
+                      >
+                        Recovery code
                       </Button>
                     </td>
                   )}
@@ -150,6 +159,13 @@ export function AdminUsers({ canManage }: { canManage: boolean }) {
         <CreateAdminModal
           onClose={() => setCreateOpen(false)}
           onCreated={() => { setCreateOpen(false); load(); }}
+        />
+      )}
+
+      {recoveryTarget && (
+        <IssueRecoveryCodeModal
+          user={recoveryTarget}
+          onClose={() => setRecoveryTarget(null)}
         />
       )}
     </div>
@@ -211,6 +227,118 @@ function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; onCreat
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
           <Button type="submit" size="sm" loading={busy}>Create account</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Admin-assisted recovery.
+ *
+ * This is the fallback for a user who lost their password and never saved a
+ * recovery code. It issues a single-use, 24-hour code that the administrator hands
+ * to the user after verifying their identity in person.
+ *
+ * It deliberately does NOT set or reveal a password: the user chooses their own at
+ * /forgot-password, and the administrator never sees it.
+ */
+function IssueRecoveryCodeModal({ user, onClose }: { user: UserRow; onClose: () => void }) {
+  const [reason, setReason] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [code, setCode] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!confirmed) {
+      setError("Confirm that you have verified this person's identity in person.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api<{ ok: true; code: string; expiresAt: string | null }>(
+        `/api/admin/users/${user.id}/recovery-code`,
+        { method: "POST", json: { reason } }
+      );
+      setCode(res.code);
+      setExpiresAt(res.expiresAt);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not issue a recovery code.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (code) {
+    return (
+      <Modal open onClose={onClose} title="Recovery code issued">
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">
+            Give this code to <span className="text-white font-semibold">{user.name}</span> ({user.regNo ?? user.email}).
+            It works once and expires{" "}
+            {expiresAt ? new Date(expiresAt).toLocaleString() : "in 24 hours"}.
+          </p>
+          <p className="rounded-xl border border-zinc-700 bg-black/40 px-4 py-4 text-center font-mono text-base tracking-widest text-white break-all select-all">
+            {code}
+          </p>
+          <p className="text-xs text-zinc-500">
+            This code is shown once and is not stored anywhere in readable form. The request has been recorded in
+            the audit log with the reason you gave.
+          </p>
+          <Button className="w-full" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Issue a recovery code for ${user.name}`}>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+          Only do this after verifying this person&apos;s identity in person against their student ID. This code
+          grants full control of the account.
+        </div>
+
+        <div>
+          <Label htmlFor="reason" required>Reason (recorded in the audit log)</Label>
+          <textarea
+            id="reason"
+            className="input min-h-[80px]"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Forgot password, no recovery code. Verified student ID 21A91A0501 at the counter."
+            required
+          />
+        </div>
+
+        <label className="flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => setConfirmed(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[#7c5cff]"
+          />
+          <span className="text-sm text-zinc-300">
+            I have verified this person&apos;s identity in person.
+          </span>
+        </label>
+
+        {error && <p className="text-sm text-red-400">{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={busy} disabled={reason.trim().length < 5 || !confirmed}>
+            Issue code
+          </Button>
         </div>
       </form>
     </Modal>

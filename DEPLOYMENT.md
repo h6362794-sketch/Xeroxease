@@ -9,8 +9,12 @@
    - `NEXT_PUBLIC_APP_URL` — your production URL (used for metadata/sitemap)
    - `STORAGE_BACKEND` — must be `supabase` on Vercel (see warning below), plus `STORAGE_BUCKET` (default `documents`), `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
    - `RATE_LIMIT_STORAGE=redis` with `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` for shared abuse protection across instances
-   - `ENABLE_EMAIL_DELIVERY=true` with `EMAIL_API_URL` / `EMAIL_API_KEY` / `EMAIL_FROM` so password-reset links are actually delivered
+   - `TRUSTED_PROXY_COUNT` — number of reverse-proxy hops in front of the app (Vercel: `1`). Set `0` only if the app is directly exposed; see SECURITY.md
    - Do **not** set `NODE_ENV`; Vercel manages it
+
+   There is **no email/SMS configuration**: password recovery is email-free (recovery
+   codes). Do not add `EMAIL_*`, `SMTP_*` or an SMS provider without also adding the
+   integration that uses them.
 4. **Migrations**: run once from CI or locally against production:
    ```bash
    DATABASE_URL="<pooler-url>" DIRECT_URL="<direct-url>" npx prisma migrate deploy
@@ -72,7 +76,7 @@ Persistent storage: point `LOCAL_STORAGE_DIR` at a durable volume and back it up
 - [ ] Payment QR uploaded + enabled in Admin → Settings
 - [ ] Super Admin → Audit Logs receiving events (test a login + order)
 - [ ] `npm audit` clean or triaged
-- [ ] Password-reset email delivery verified end-to-end (see below)
+- [ ] Account recovery understood by staff: users self-serve at **Profile → Security**; users with no code are handled by a Super Admin issuing one from **Admin → Users** after in-person ID verification
 - [ ] Backups scheduled (DB + storage) and a restore tested
 - [ ] Retention policy configured (Settings → retention days)
 
@@ -84,13 +88,26 @@ Persistent storage: point `LOCAL_STORAGE_DIR` at a durable volume and back it up
 - Keep dependencies current: `npm outdated`, `npm audit fix`
 
 
-## Verifying password-reset email delivery
+## Verifying account recovery
 
-Live email delivery is **not enabled by default** and has not been verified against a real provider in this repository. To complete it:
+Recovery is email-free, so there is no mail transport to verify. Verify these four
+behaviours instead, against staging first:
 
-1. Create an account with a Resend-compatible HTTPS email API.
-2. Set `ENABLE_EMAIL_DELIVERY=true`, `EMAIL_API_URL`, `EMAIL_API_KEY` and `EMAIL_FROM` (a verified sender on your domain).
-3. Confirm `npm run config:check` reports "email delivery configured".
-4. Request a reset at `/forgot-password` and confirm the message arrives and the link opens `/reset-password?token=…`.
+1. **Self-service setup** — sign in, open **Profile → Security**, generate a code, copy
+   it, sign out.
+2. **Self-service reset** — at `/forgot-password`, submit the identifier + code + a new
+   password. Expect redirect to `/login?reset=1` and a successful sign-in with the new
+   password.
+3. **Single use** — repeat step 2 with the same code. It must fail with the generic
+   `RECOVERY_FAILED` message.
+4. **Admin fallback** — as Super Admin, open **Admin → Users → Recovery code**, give a
+   reason, and hand the returned code to the user. Confirm the audit log records
+   `RECOVERY_CODE_ADMIN_ISSUED` with the reason, and that the code works once at
+   `/forgot-password` and expires after 24 h.
 
-Until step 4 succeeds, treat password-reset delivery as **unverified**. In development only, the reset link can be surfaced in the API response by setting `EXPOSE_RESET_TOKEN_IN_DEV=true`; this is ignored whenever `NODE_ENV=production` or email delivery is enabled.
+Confirm no plaintext code ever appears in the database, server logs or audit metadata:
+
+```sql
+-- must return 0 rows for a code you just issued
+SELECT count(*) FROM recovery_codes WHERE code_hash !~ '^[0-9a-f]{64}$';
+```

@@ -28,7 +28,12 @@ Security is a first-class requirement, prioritized above visual effects and conv
 | Mass assignment | Zod schemas whitelist exact fields; client never sets role/price/status |
 | Parameter pollution | Zod coerces and validates types; unknown keys dropped |
 | Replay (collection QR) | Single-use tokens: consumption is a **guarded conditional UPDATE** (`collection_token_used_at IS NULL` + status) inside one transaction, so exactly one of N concurrent scans can complete the order |
-| Replay (password reset) | Redemption is a **guarded conditional UPDATE** (`used_at IS NULL AND expires_at > now`) inside one transaction; outstanding sibling tokens are expired and all sessions revoked in the same transaction |
+| Replay (recovery code) | Redemption is a **guarded conditional UPDATE** (`used_at IS NULL` and expiry not passed) inside one transaction, so exactly one of N concurrent redemptions can win; the password change **and** full session revocation happen in that same transaction |
+| Account takeover via a lost recovery code | The code alone is not sufficient — it must be paired with the account identifier, and it is single-use. Stolen session cookies cannot mint a new code: generation requires the **current password** |
+| Recovery-code disclosure | Only a SHA-256 hash is stored. The plaintext is returned exactly once and is never logged, and never appears in audit metadata, analytics or error reports |
+| Account enumeration via recovery | Every failure mode (no account, no code, wrong, expired, already-used, malformed, disabled) returns one identical response, and the endpoint is rate limited per IP **and** per identifier |
+| Rate-limit bypass by IP spoofing | Client IP is taken `TRUSTED_PROXY_COUNT` hops from the **right** of `X-Forwarded-For`, so a client that prepends forged entries cannot choose its own bucket; `TRUSTED_PROXY_COUNT=0` ignores the header entirely |
+| Oversized upload exhausting memory | The multipart body is parsed through a stream that errors the moment a hard byte cap is crossed, so a lying `Content-Length` cannot make the server buffer an unbounded payload |
 | Storage data loss | `STORAGE_BACKEND=local` is **refused in production** unless `ALLOW_EPHEMERAL_LOCAL_STORAGE=true`, so uploads cannot silently disappear from an ephemeral filesystem while the database still references them |
 | Unreliable page counts being priced | Heuristic counts (raw-byte PDF `/Type /Page` counting, DOCX page-break counting) return `NEEDS_REVIEW`, never `COMPLETED`; ordering stays blocked until the student or an administrator confirms the count |
 
@@ -37,7 +42,9 @@ Security is a first-class requirement, prioritized above visual effects and conv
 - **Passwords**: Argon2id (memory-hard) with automatic bcrypt fallback; never logged, never stored plaintext.
 - **Sessions**: opaque 256-bit random tokens in HTTP-only cookies; server-side `sessions` table holds only the SHA-256 hash; TTL via `SESSION_TTL_HOURS`; explicit revocation on logout/reset/disable.
 - **Account lockout**: progressive counters with temporary lock; all failures audited with IP.
-- **Password reset**: single-use, 30-minute, SHA-256-hashed tokens. Requesting a reset expires any previously issued unused token for that user, and redemption is atomic (conditional UPDATE) so concurrent redemptions cannot both succeed. A successful reset revokes **all** sessions and expires every remaining token for that user. Both the request and the redeem endpoints are rate limited, and every failure mode returns the same message so the endpoint cannot be used to probe which tokens are live.
+- **Account recovery (email-free)**: a 160-bit single-use **recovery code** the user generates in advance. Only its SHA-256 is stored; the plaintext is shown once and never persisted, logged or audited. Generating one requires the current password and atomically replaces any previous code, so there is never more than one live code per account and a user is never stranded with none. Redemption is atomic (conditional UPDATE), requires the matching identifier, revokes **all** sessions and clears lockout. Self-generated codes do not expire; administrator-issued codes expire in 24 h.
+- **Admin-assisted recovery fallback**: for a user with no code, a Super Admin can issue a single-use 24 h code from **Admin → Users** after verifying identity in person. It is audited with a mandatory free-text reason, never reveals or sets a password, and never signs anyone in.
+- **No email or SMS in the recovery path.** The app sends no mail at all; there is no `EMAIL_*`/SMTP/SMS configuration and no paid third-party recovery dependency.
 - **Admin auth**: separate login endpoint + page (`/admin/login`), stricter lockout, dedicated audit events. **No public admin signup exists anywhere**; admins are provisioned only by Super Admin through the admin console.
 
 ## 3. Authorization model
@@ -107,7 +114,6 @@ Honest list — these remain after deploying this codebase:
 
 - **Malware scanning is not active by default.** Enable `ENABLE_MALWARE_SCAN` with a scanning vendor for production.
 - **Rate limiting is in-memory** — fine for a single instance; use Redis (e.g., Upstash) for multi-instance deployments.
-- **Email delivery is not configured** by default: password-reset tokens surface only in dev mode; wire an email provider before production use.
 - **2FA/OTP flags exist but are not implemented** (`ENABLE_2FA`, `ENABLE_OTP_VERIFICATION`) — do not enable the flags expecting behavior.
 - **Payments remain manually verified** — the desk must actually check bank/UPI statements; the app cannot detect forged references.
 - **HTTPS/TLS** termination is your deployment platform's responsibility; HSTS is set in production but only matters behind TLS.
@@ -119,13 +125,14 @@ Honest list — these remain after deploying this codebase:
 
 These are **not** fixed by the code and must be handled by whoever deploys the app:
 
-1. **Email delivery is unverified.** Password-reset delivery is implemented against a Resend-compatible HTTPS API but has never been exercised against a live provider in this repository. Configure `ENABLE_EMAIL_DELIVERY`, `EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM` and verify a real reset email before relying on it.
-2. **`X-Forwarded-For` is trusted for client IP.** Rate limiting keys on `X-Forwarded-For` / `X-Real-IP`. If the app is exposed directly to the internet (not behind a proxy that overwrites these headers), a client can spoof its IP and bypass per-IP limits. Always deploy behind a trusted proxy (Vercel, nginx with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`, etc.).
-3. **Rate limiting is per-IP.** Users behind one NAT share a bucket; a determined distributed attack is not stopped by these limits alone. Use the shared Redis store and consider a WAF.
-4. **`next/font/google` requires build-time network access.** The build fetches Inter from Google Fonts. In an air-gapped or egress-restricted CI runner the build fails; either allow egress to `fonts.googleapis.com` or self-host the font.
-5. **No malware scanning.** `ENABLE_MALWARE_SCAN` exists as a hook but no scanner is wired in. Uploaded documents are parsed server-side (pdf-lib / zlib inflate), so a scanning vendor is recommended before processing untrusted documents at scale.
-6. **Reverse-proxy body limits.** The app rejects oversized uploads, but the platform and proxy must be configured to match (nginx `client_max_body_size 110M`; note that some serverless platforms cap request bodies far below 100 MB).
-7. **Backups and retention** are the operator's responsibility. Never run `prisma migrate reset` or `prisma db push --force-reset` against production data.
-8. **CSRF** relies on `SameSite=Lax` cookies plus JSON-only state-changing endpoints. If a future endpoint accepts cross-origin form posts or `text/plain` bodies, add an explicit CSRF token.
+1. **`TRUSTED_PROXY_COUNT` must match your deployment.** Client IP is read `TRUSTED_PROXY_COUNT` hops from the right of `X-Forwarded-For`, which is only correct if exactly that many trusted proxies sit in front of the app (Vercel: 1). Getting it wrong does more than mis-attribute IPs: too high a value reads a client-forged entry and lets an attacker pick their own rate-limit bucket; too low a value buckets every client behind the proxy together. Set it deliberately and re-check after any infrastructure change.
+2. **Recovery codes are bearer credentials.** Anyone holding a user's code *and* their identifier can take over the account. The code is single-use and never emailed, but it is only as safe as wherever the user stored it. Encourage a password manager, and treat a report of a lost code as an incident.
+3. **The admin-assisted fallback depends on human identity verification.** The code cannot enforce it — an administrator who issues a code without checking ID defeats the control. Every issuance is audited with a mandatory reason; review `RECOVERY_CODE_ADMIN_ISSUED` entries.
+4. **Rate limiting is per-IP.** Users behind one NAT share a bucket; a determined distributed attack is not stopped by these limits alone. Use the shared Redis store and consider a WAF.
+5. **`next/font/google` requires build-time network access.** The build fetches Inter from Google Fonts. In an air-gapped or egress-restricted CI runner the build fails; either allow egress to `fonts.googleapis.com` or self-host the font.
+6. **No malware scanning.** `ENABLE_MALWARE_SCAN` exists as a hook but no scanner is wired in. Uploaded documents are parsed server-side (pdf-lib / zlib inflate), so a scanning vendor is recommended before processing untrusted documents at scale.
+7. **Reverse-proxy body limits.** The app rejects oversized uploads, but the platform and proxy must be configured to match (nginx `client_max_body_size 110M`; note that some serverless platforms cap request bodies far below 100 MB).
+8. **Backups and retention** are the operator's responsibility. Never run `prisma migrate reset` or `prisma db push --force-reset` against production data.
+9. **CSRF** relies on `SameSite=Lax` cookies plus JSON-only state-changing endpoints. If a future endpoint accepts cross-origin form posts or `text/plain` bodies, add an explicit CSRF token.
 
 Run `npm run config:check` with `NODE_ENV=production` before every deploy to catch missing or obviously invalid configuration.

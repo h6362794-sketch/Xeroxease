@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { ZodError, type ZodSchema } from "zod";
 import { rateLimitAsync } from "./rate-limit";
+import { env } from "./env";
 
 export function json<T>(data: T, init?: ResponseInit) {
   return NextResponse.json(data, init);
@@ -54,10 +55,34 @@ export function withErrorHandling(handler: () => Promise<Response>): Promise<Res
   });
 }
 
+/**
+ * Resolve the client IP for rate limiting and audit trails.
+ *
+ * `X-Forwarded-For` is attacker-controlled unless a trusted proxy overwrites or
+ * appends to it. Reading the leftmost entry (the previous behaviour) let any client
+ * forge its own address and bypass per-IP limits. We now read the entry written by
+ * the first *trusted* proxy -- TRUSTED_PROXY_COUNT hops from the right -- so
+ * prepended junk is ignored. With TRUSTED_PROXY_COUNT=0 the header is not read at
+ * all, which is the correct setting when the app is directly exposed.
+ */
 export function getClientIp(req: Request): string {
+  const hops = env.TRUSTED_PROXY_COUNT;
+  if (hops === 0) return "unknown";
+
   const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  return req.headers.get("x-real-ip") || "unknown";
+  if (fwd) {
+    const parts = fwd
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length > 0) {
+      const idx = parts.length - hops;
+      return parts[idx >= 0 ? idx : 0];
+    }
+  }
+
+  const real = req.headers.get("x-real-ip");
+  return real ? real.trim() : "unknown";
 }
 
 /**

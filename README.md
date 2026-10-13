@@ -9,7 +9,7 @@ Built with Next.js 14, TypeScript (strict), Tailwind CSS, Framer Motion, Prisma,
 ## ✨ Features
 
 ### Students
-- **Register / login** with email or registration number; secure password reset
+- **Register / login** with email or registration number; **email-free password recovery** via a single-use 160-bit recovery code you generate yourself (no mail provider, no paid service)
 - **Multi-step order wizard**: drag-and-drop upload (PDF/DOC/DOCX/PPT/PPTX, 100 MB/file), AI page detection, print configuration (A4/Legal, colour required, sides, copies, custom page ranges), finishing (staple/spiral/stick file), review, QR payment, confirmation
 - **Server-verified page counts** — pricing is always computed on the server from parsed documents
 - **QR payment workflow**: scan the desk's UPI QR, submit the transaction reference, admin verifies
@@ -102,7 +102,7 @@ Full setup walkthrough: [`SETUP.md`](SETUP.md) · Database details: [`DATABASE.m
 ```
 src/
   app/                  # App Router pages + API routes
-    (auth)/             #   login, register, forgot/reset password
+    (auth)/             #   login, register, forgot-password (recovery-code reset)
     (student)/          #   dashboard, orders, notifications, profile (server-guarded)
     admin/              #   /admin/login + (panel)/ dashboard pages (RBAC-guarded)
     api/                #   REST API (auth, uploads, documents, orders, payment, admin)

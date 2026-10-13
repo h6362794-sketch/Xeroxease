@@ -61,19 +61,20 @@ export const env = {
   get SUPABASE_SERVICE_ROLE_KEY() {
     return process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   },
-  // ---------- Email (password reset delivery) ----------
-  get ENABLE_EMAIL_DELIVERY() {
-    return bool("ENABLE_EMAIL_DELIVERY", false);
+  /**
+   * Number of reverse proxies in front of the app whose `X-Forwarded-For` entries
+   * may be trusted. `getClientIp` reads the address that many hops from the right,
+   * so anything an attacker prepends is ignored.
+   *
+   * 1 = one trusted proxy (Vercel, nginx, Cloudflare) -- the common case.
+   * 0 = app is directly exposed to the internet: ignore XFF entirely, because a
+   *     client can forge it to bypass per-IP rate limits.
+   */
+  get TRUSTED_PROXY_COUNT() {
+    const raw = num("TRUSTED_PROXY_COUNT", 1);
+    return Math.max(0, Math.min(10, Math.floor(raw)));
   },
-  get EMAIL_API_URL() {
-    return process.env.EMAIL_API_URL || "";
-  },
-  get EMAIL_API_KEY() {
-    return process.env.EMAIL_API_KEY || "";
-  },
-  get EMAIL_FROM() {
-    return process.env.EMAIL_FROM || "";
-  },
+
   // ---------- Shared rate limiting ----------
   get RATE_LIMIT_STORAGE(): "memory" | "redis" {
     return process.env.RATE_LIMIT_STORAGE === "redis" ? "redis" : "memory";

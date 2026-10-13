@@ -143,8 +143,15 @@ export async function rateLimitAsync(
 export const RATE_LIMITS = {
   login: { limit: 10, windowMs: 5 * 60_000 },
   register: { limit: 5, windowMs: 60 * 60_000 },
-  forgotPassword: { limit: 3, windowMs: 15 * 60_000 },
-  resetPassword: { limit: 5, windowMs: 15 * 60_000 },
+  // Recovery-code redemption: the code space is 160 bits, so this limit is about
+  // stopping online guessing and stopping one attacker from burning through many
+  // accounts' codes, not about the code space being small.
+  recoveryReset: { limit: 5, windowMs: 15 * 60_000 },
+  // Generating a code re-hashes the password; cap it so a stolen session cannot
+  // churn codes and thereby invalidate the code the real owner stored.
+  recoveryGenerate: { limit: 5, windowMs: 60 * 60_000 },
+  // Admin-assisted issuance is a sensitive, audited action.
+  adminRecoveryCode: { limit: 20, windowMs: 60 * 60_000 },
   upload: { limit: 30, windowMs: 10 * 60_000 },
   analyze: { limit: 60, windowMs: 10 * 60_000 },
   paymentSubmit: { limit: 10, windowMs: 10 * 60_000 },

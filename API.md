@@ -18,8 +18,10 @@ Rate limits (per IP, per bucket): login 10/5min · register 5/h · forgot 3/15mi
 | POST | `/auth/admin-login` | — | email, password | ADMIN/SUPER_ADMIN only. Lockout after 5 failures. Audited. |
 | POST | `/auth/logout` | session | — | Revokes session, clears cookie. |
 | GET | `/auth/me` | session | — | `{ user }` or `{ user: null }`. |
-| POST | `/auth/forgot-password` | — | email | Anti-enumeration; single-use token valid 30 min. Dev returns `devResetToken` when email delivery disabled. |
-| POST | `/auth/reset-password` | — | token, password | Consumes token, rehashes password, revokes all sessions. |
+| POST | `/auth/recovery/code` | session | password | Issues/rotates the caller's single-use recovery code. Returns the plaintext **once**. |
+| GET | `/auth/recovery/status` | session | — | `{ hasCode, createdAt, expiresAt, usedAt, issuedByAdmin }` — metadata only, never the code. |
+| POST | `/auth/recovery/reset` | — | identifier, recoveryCode, password | Email-free password reset. Rate limited 5 / 15 min per IP **and** identifier. |
+| POST | `/admin/users/:id/recovery-code` | SUPER_ADMIN | reason | Admin-assisted fallback: issues a single-use 24 h code. Audited. |
 
 ## Orders
 
@@ -91,9 +93,51 @@ Body: `{ "pageCount": 1..10000 }`
 Rejected when the document is not yours (404), is already attached to an order (409),
 or is still being analyzed (409).
 
-### `POST /api/auth/reset-password` 🌐
+### Account recovery (email-free) 🌐
 
-Rate limited (5 / 15 min per IP). Redemption is atomic and single-use. Unknown,
-expired, malformed and already-used tokens all return the **same** `400
-RESET_TOKEN_INVALID` response so the endpoint cannot be used to probe live tokens.
-A successful reset revokes every session for that user.
+XeroxEase sends **no email** and uses no paid third-party recovery service. A
+recovery code is a 160-bit, single-use credential the user generates in advance and
+stores themselves.
+
+**`POST /api/auth/recovery/code`** (session required)
+
+Body: `{ "password": "<current password>" }` → `{ "ok": true, "code": "XXXX-XXXX-…", "createdAt": … }`
+
+Re-authenticates with the current password, because the code is an account-takeover
+credential. Rate limited 5 / hour per user. Generating a code atomically replaces any
+existing one, so there is never more than one live code per account. The plaintext is
+returned once and never persisted — only its SHA-256 is stored.
+
+**`GET /api/auth/recovery/status`** (session required)
+
+Returns `{ hasCode, createdAt, expiresAt, usedAt, issuedByAdmin }`. No secret is ever
+returned; a code cannot be re-read after issue.
+
+**`POST /api/auth/recovery/reset`** (public)
+
+Body: `{ "identifier", "recoveryCode", "password" }`
+
+Rate limited (5 / 15 min), keyed on IP **and** identifier so one client cannot attack
+many accounts from a single address. Redemption is atomic and single-use:
+
+- The code hash must match, must not be `used`, and (for admin-issued codes) must not
+  be expired.
+- The code must belong to the account named by `identifier`.
+- The guarded `UPDATE ... WHERE used_at IS NULL` means concurrent redemptions produce
+  exactly one winner.
+- On success: password replaced, lockout cleared, **all sessions revoked**.
+
+Every failure — unknown account, no code, wrong code, expired code, already-used code,
+malformed code, disabled account — returns the **same** `400 RECOVERY_FAILED` response,
+so the endpoint is neither an account-enumeration nor a code-validity oracle. No email
+is sent at any point.
+
+**`POST /api/admin/users/:id/recovery-code`** (SUPER_ADMIN, audited)
+
+Body: `{ "reason": "…" }` → `{ "ok": true, "code": "XXXX-XXXX-…", "expiresAt": … }`
+
+The fallback for a user who lost their password and never saved a code. It issues a
+single-use code valid for `ADMIN_ISSUED_CODE_TTL_HOURS` (24 h) that the administrator
+hands over **after verifying the person's identity in person**. It never reveals or
+sets a password, and never signs anyone in. The reason is stored in the audit log; the
+code is not stored anywhere in readable form.

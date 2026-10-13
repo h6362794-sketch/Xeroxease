@@ -5,13 +5,15 @@ import { Card, EmptyState, Badge } from "@/components/ui";
 import { StatusBadge } from "@/components/status-badge";
 import { FilePlus2, ArrowRight, FileText, Coins } from "lucide-react";
 import { formatCurrencyINR, formatDateShort } from "@/lib/utils";
+import { getRecoveryCodeStatus } from "@/server/recovery";
+import { ShieldAlert } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const user = await requirePageUser();
 
-  const [activeOrder, recentOrders, stats] = await Promise.all([
+  const [activeOrder, recentOrders, stats, recovery] = await Promise.all([
     prisma.order.findFirst({
       where: { userId: user.id, status: { notIn: ["COMPLETED", "CANCELLED", "FAILED"] } },
       orderBy: { createdAt: "desc" },
@@ -22,6 +24,7 @@ export default async function DashboardPage() {
       take: 5,
     }),
     prisma.order.aggregate({ where: { userId: user.id }, _count: true, _sum: { totalAmount: true } }),
+    getRecoveryCodeStatus(user.id),
   ]);
 
   return (
@@ -40,6 +43,26 @@ export default async function DashboardPage() {
           <FilePlus2 className="h-5 w-5" /> Create New Order
         </Link>
       </div>
+
+      {(!recovery.hasCode || recovery.usedAt) && (
+        <Link
+          href="/security"
+          className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 hover:border-amber-500/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7c5cff]/60"
+        >
+          <ShieldAlert className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+          <span className="text-sm">
+            <span className="font-semibold text-amber-200">
+              {recovery.usedAt ? "Your recovery code has been used." : "Protect your account."}
+            </span>{" "}
+            <span className="text-zinc-300">
+              {recovery.usedAt
+                ? "Generate a new one now — without an active code you cannot reset a forgotten password on your own."
+                : "Create a recovery code so you can reset your password yourself if you ever forget it. Takes 20 seconds."}
+            </span>
+            <span className="ml-1 font-semibold text-[#b49aff]">Set it up →</span>
+          </span>
+        </Link>
+      )}
 
       {activeOrder ? (
         <Link

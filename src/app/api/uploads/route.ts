@@ -5,17 +5,20 @@ import { RATE_LIMITS } from "@/server/rate-limit";
 import { validateUpload, hasDoubleExtension, sanitizeFilename } from "@/server/file-validation";
 import { buildStorageKey, deleteFile, saveBuffer } from "@/server/storage";
 import { MAX_FILE_SIZE, MAX_FILES_PER_ORDER } from "@/lib/constants";
+import { UploadTooLargeError, parseBoundedFormData } from "@/lib/bounded-body";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
  * Multipart overhead (boundaries + headers) on top of a single file.
- * Content-Length is only a hint from the client — it is checked early to reject
- * obviously oversized bodies, and the real byte length is enforced afterwards.
+ *
+ * Content-Length is only a client-supplied hint: it is checked early to reject
+ * obviously oversized bodies, but the authoritative limit is enforced by
+ * `parseBoundedFormData`, which aborts the stream the moment the cap is crossed.
  */
 const MULTIPART_OVERHEAD_BYTES = 8 * 1024;
-const MAX_DECLARED_BODY_BYTES = MAX_FILE_SIZE + MULTIPART_OVERHEAD_BYTES;
+const MAX_BODY_BYTES = MAX_FILE_SIZE + MULTIPART_OVERHEAD_BYTES;
 
 export async function POST(req: Request) {
   return withErrorHandling(async () => {
@@ -29,17 +32,20 @@ export async function POST(req: Request) {
       return apiError("Expected multipart form data.", 415);
     }
 
-    // Reject oversized bodies BEFORE parsing, so the request never reaches the
-    // multipart parser (and never buffers the payload in memory).
+    // Cheap early rejection when the client is honest about Content-Length.
     const declaredSize = Number(req.headers.get("content-length") || "0");
-    if (Number.isFinite(declaredSize) && declaredSize > MAX_DECLARED_BODY_BYTES) {
+    if (Number.isFinite(declaredSize) && declaredSize > MAX_BODY_BYTES) {
       return apiError(`Upload too large. Maximum file size is ${Math.floor(MAX_FILE_SIZE / (1024 * 1024))} MB.`, 413);
     }
 
+    // Authoritative limit, enforced while the body is being streamed/parsed.
     let form: FormData;
     try {
-      form = await req.formData();
-    } catch {
+      form = await parseBoundedFormData(req, MAX_BODY_BYTES);
+    } catch (err) {
+      if (err instanceof UploadTooLargeError) {
+        return apiError(`Upload too large. Maximum file size is ${Math.floor(MAX_FILE_SIZE / (1024 * 1024))} MB.`, 413);
+      }
       return apiError("Malformed or interrupted upload. Please try again.", 400);
     }
 

@@ -137,21 +137,16 @@ if (production) {
     );
   }
 
+  // Password recovery is email-free (recovery codes), so there is no mail
+  // transport to configure. Confirm instead that the operator understands where
+  // the fallback lives.
   add(
-    "email delivery configured",
+    "recovery-code fallback documented",
     "recommended",
-    value("ENABLE_EMAIL_DELIVERY") === "true" &&
-      value("EMAIL_API_URL").length > 0 &&
-      value("EMAIL_API_KEY").length > 0 &&
-      value("EMAIL_FROM").length > 0,
-    "Without it, password-reset links cannot be delivered to users."
-  );
-
-  add(
-    "dev reset tokens not exposed",
-    "required",
-    value("EXPOSE_RESET_TOKEN_IN_DEV") !== "true",
-    "EXPOSE_RESET_TOKEN_IN_DEV must not be enabled in production."
+    true,
+    "Password recovery uses recovery codes, not email. Users who never generated one " +
+      "recover via a Super Admin issuing a code from Admin > Users after in-person ID " +
+      "verification. Document this for your staff."
   );
 }
 
