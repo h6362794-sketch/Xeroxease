@@ -19,11 +19,47 @@
    ```bash
    DATABASE_URL="<pooler-url>" DIRECT_URL="<direct-url>" npx prisma migrate deploy
    ```
-   If the production database was previously created with `prisma db push`, baseline it first (writes a history row only, touches no data):
+   **If the production database was previously created with `prisma db push`, you must
+   baseline it — but verify first.** `--applied` only writes a history row; it does not
+   check anything. Marking a migration applied when the schema does not actually match
+   it is the single easiest way to corrupt a future migration run.
+
+   Step 1 — prove the live schema matches the migrations, using a throwaway shadow
+   database (it is created, diffed and dropped; your data is never touched):
+
+   ```bash
+   # Create an empty database the diff can use as scratch space.
+   createdb xeroxease_shadow   # or create it in your provider's dashboard
+
+   # Exits non-zero if the committed migrations do not reproduce schema.prisma.
+   npx prisma migrate diff \
+     --from-migrations prisma/migrations \
+     --to-schema-datamodel prisma/schema.prisma \
+     --shadow-database-url "<postgres-url-for-xeroxease_shadow>" \
+     --exit-code
+
+   # And prove the LIVE database already matches schema.prisma.
+   npx prisma migrate diff \
+     --from-url "$DATABASE_URL" \
+     --to-schema-datamodel prisma/schema.prisma \
+     --exit-code
+   ```
+
+   Both must exit 0. If the second one reports differences, **stop** — your production
+   schema and your code disagree. Resolve that (usually with a new migration that
+   reconciles them) before continuing. Do not baseline over a difference.
+
+   Step 2 — only now record the baseline:
+
    ```bash
    npx prisma migrate resolve --applied 20261013000000_init
+   npx prisma migrate resolve --applied 20261014000000_recovery_codes   # only if the table already exists
    npx prisma migrate status
    ```
+
+   A fast text-level consistency check that needs no database at all is also available:
+   `npm run schema:check`. CI runs it on every push, and also runs the authoritative
+   `migrate diff` above against a real PostgreSQL 16 container.
 5. **First admin**: do **not** rely on `npm run db:seed` in production (it refuses the documented default passwords). Either run it with `SEED_ADMIN_PASSWORD=<strong unique value>` and rotate immediately, or create the first Super Admin through the Super Admin console.
 6. **Deploy**. Build command is `prisma generate && next build` (set in package.json).
 
@@ -39,10 +75,28 @@ The app enforces a 100 MB per-file limit and rejects oversized bodies before par
 - nginx: `client_max_body_size 110M;`
 - Always forward `X-Forwarded-For` so rate limiting keys on the real client IP.
 
+### Backup
+
+Before any migration:
+
+```bash
+pg_dump "$DATABASE_URL" --format=custom --file=xeroxease-$(date +%F).dump
+```
+
+Test that you can restore it into a scratch database before you trust it. Also snapshot
+your storage bucket (uploaded documents) — the database references files by key, so a
+database restore without a matching storage restore leaves orders pointing at nothing.
+
+Retention and scheduling are your responsibility; nothing in the app does this for you.
+Never run `prisma migrate reset` or `prisma db push --force-reset` against production.
+
 ### Rollback
 
 1. Redeploy the previous build (Vercel → Deployments → Promote, or `git checkout <previous-tag>` on a VPS).
-2. Migrations are forward-only: rolling back code without rolling back the schema is safe as long as the previous code does not depend on a column the new migration added. If a migration must be undone, write a new migration that reverses it — never edit an applied migration file, and never `prisma migrate reset` a production database.
+2. The `20261014000000_recovery_codes` migration is additive only, so rolling back the
+   *code* while leaving the new table in place is safe: previous releases simply never
+   read it. If you must undo it, write a new migration that drops it.
+3. Migrations are forward-only: rolling back code without rolling back the schema is safe as long as the previous code does not depend on a column the new migration added. If a migration must be undone, write a new migration that reverses it — never edit an applied migration file, and never `prisma migrate reset` a production database.
 3. Keep the previous build artifact available until the new release is verified.
 
 ## Option B — VPS / Docker (full control, local storage OK)

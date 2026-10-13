@@ -16,6 +16,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:status": "prisma migrate status",
     "config:check": "tsx scripts/check-env.ts",
+    "schema:check": "tsx scripts/verify-migrations.ts",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "postinstall": "prisma generate"

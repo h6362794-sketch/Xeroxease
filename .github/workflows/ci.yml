@@ -30,6 +30,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Cheap text-level drift check: fails if schema.prisma and the committed
+      # migration SQL disagree, without needing a database.
+      - name: Schema/migration consistency
+        run: npm run schema:check
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -74,7 +79,23 @@ jobs:
       - run: npm ci
       # Applies prisma/migrations to an empty database. Fails if the committed
       # migrations no longer produce the schema in prisma/schema.prisma.
+      - name: Create shadow database for drift detection
+        run: psql "postgresql://postgres:postgres@localhost:5432/postgres" -c 'CREATE DATABASE xeroxease_ci_shadow;'
+
       - name: Apply migrations
         run: npx prisma migrate deploy
-      - name: Verify schema matches migrations
+
+      - name: Verify the migrations reproduce schema.prisma
+        # Authoritative drift check: builds the schema from the migrations alone and
+        # diffs it against schema.prisma. Exits non-zero on any difference, so a
+        # schema change committed without a matching migration breaks the build.
+        # It needs a database to introspect, unlike `npm run schema:check`.
+        run: |
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "postgresql://postgres:postgres@localhost:5432/xeroxease_ci_shadow" \
+            --exit-code
+
+      - name: Confirm no pending migrations
         run: npx prisma migrate status
