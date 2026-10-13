@@ -112,7 +112,9 @@ if (production) {
     "NEXT_PUBLIC_APP_URL set to https",
     "required",
     /^https:\/\//.test(value("NEXT_PUBLIC_APP_URL")),
-    "Password-reset links are built from this URL."
+    "Used for page metadata, canonical URLs and the sitemap. Recovery is email-free, " +
+      "so no reset link is built from it, but a non-https value still produces wrong " +
+      "canonical URLs behind TLS."
   );
 
   const rateStore = value("RATE_LIMIT_STORAGE") || "memory";
