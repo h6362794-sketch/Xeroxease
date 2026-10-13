@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@/server/auth";
+import { requirePageUser } from "@/server/auth";
 import { prisma } from "@/lib/prisma";
 import { Card } from "@/components/ui";
 import { Mail, Phone, Hash, GraduationCap, KeyRound, LifeBuoy, ShieldCheck } from "lucide-react";
@@ -7,7 +7,7 @@ import { Mail, Phone, Hash, GraduationCap, KeyRound, LifeBuoy, ShieldCheck } fro
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage() {
-  const session = await requireUser();
+  const session = await requirePageUser();
   const user = await prisma.user.findUnique({
     where: { id: session.id },
     select: { name: true, email: true, phone: true, regNo: true, branch: true, section: true, year: true, createdAt: true },

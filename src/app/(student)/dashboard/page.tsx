@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@/server/auth";
+import { requirePageUser } from "@/server/auth";
 import { prisma } from "@/lib/prisma";
 import { Card, EmptyState, Badge } from "@/components/ui";
 import { StatusBadge } from "@/components/status-badge";
@@ -9,7 +9,7 @@ import { formatCurrencyINR, formatDateShort } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const user = await requireUser();
+  const user = await requirePageUser();
 
   const [activeOrder, recentOrders, stats] = await Promise.all([
     prisma.order.findFirst({
