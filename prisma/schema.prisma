@@ -122,7 +122,13 @@ model User {
   feedback    Feedback[]
   auditLogs   AuditLog[]  @relation("AuditActor")
   paymentEvents PaymentEvent[] @relation("PaymentActor")
+  issuedRecoveryCodes RecoveryCode[] @relation("RecoveryCodeIssuer")
+  // DEPRECATED: `password_reset_tokens` backed the removed email-link password
+  // reset. No application code reads or writes it any more. The table is left in
+  // place deliberately (dropping it would be destructive); remove it in a separate,
+  // operator-approved migration. Any outstanding tokens expired 30 min after issue.
   passwordResets PasswordResetToken[]
+  recoveryCodes RecoveryCode[]
 
   @@index([role])
   @@index([isActive])
@@ -159,6 +165,36 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+model RecoveryCode {
+  id        String   @id @default(uuid())
+  // One active recovery code per user: issuing a new one replaces the old row.
+  userId    String   @unique @map("user_id")
+  // Only a SHA-256 hash of the normalised code is ever persisted. The plaintext
+  // code exists in memory for the single response that returns it to its owner.
+  codeHash  String   @unique @map("code_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+  // Null when the user generated it themselves; set when a Super Admin issued it
+  // on the user's behalf after out-of-band identity verification.
+  createdBy String?  @map("created_by")
+  // Admin-issued codes expire; self-generated codes do not.
+  expiresAt DateTime? @map("expires_at")
+  // Recovery codes are single-use: set the moment a code redeems a password reset.
+  usedAt    DateTime? @map("used_at")
+  rotatedAt DateTime? @map("rotated_at")
+
+  user   User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issuer User? @relation("RecoveryCodeIssuer", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  // No @@index([userId]) here on purpose. `userId` is already @unique, which
+  // creates a B-tree unique index on that column; a second non-unique index over
+  // the same column would be strictly redundant — it serves no lookup the unique
+  // index does not already serve, and only adds write amplification. Declaring it
+  // without a matching CREATE INDEX also desynchronises schema.prisma from the
+  // migrations, which is exactly what `prisma migrate diff --exit-code` reported
+  // ("Changed the recovery_codes table: Added index on columns (user_id)").
+  @@map("recovery_codes")
 }
 
 model PricingConfig {

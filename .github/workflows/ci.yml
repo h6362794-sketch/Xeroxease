@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    name: Typecheck, lint, test and build
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
+      DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
+      SESSION_SECRET: "ci-only-secret-value-that-is-at-least-32-chars"
+      NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+      STORAGE_BACKEND: "local"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      # `npm ci` runs `prisma generate` via postinstall, so the generated client is
+      # present before typecheck/build. No database is needed for that step.
+      - name: Install dependencies
+        run: npm ci
+
+      # Cheap text-level drift check: fails if schema.prisma and the committed
+      # migration SQL disagree on tables, columns, indexes or unique constraints.
+      # It does NOT replace the database-backed authoritative check in the
+      # `migrations` job — see the scope note printed by the script.
+      - name: Schema/migration consistency (text pre-flight)
+        run: npm run schema:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+  migrations:
+    name: Migration check against a clean database
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: xeroxease_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
+      DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
+      SESSION_SECRET: "ci-only-secret-value-that-is-at-least-32-chars"
+      SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci_shadow"
+      # Opt-in for tests/recovery-concurrency.pg.test.ts. Set ONLY here: this is the
+      # only job with a real PostgreSQL service. The `verify` job also defines
+      # DATABASE_URL but has no database, so the flag keeps the integration test from
+      # running there.
+      PG_INTEGRATION_TESTS: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+
+      - name: Create shadow database for drift detection
+        run: psql "postgresql://postgres:postgres@localhost:5432/postgres" -c 'CREATE DATABASE xeroxease_ci_shadow;'
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: Verify the migrations reproduce schema.prisma
+        # AUTHORITATIVE drift check: replays the migrations into a real PostgreSQL 16
+        # database and diffs the result against schema.prisma. Exits non-zero on any
+        # difference, so a schema change committed without a matching migration breaks
+        # the build. This is the check that proves schema/migration agreement — the
+        # text-level `npm run schema:check` is only a pre-flight and has previously
+        # passed while real drift existed.
+        run: |
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "$SHADOW_DATABASE_URL" \
+            --exit-code
+
+      - name: Confirm no pending migrations
+        run: npx prisma migrate status
+
+      # ---------------------------------------------------------------------
+      # Real-database concurrency test.
+      #
+      # `tests/recovery.test.ts` proves the application-level guard against an
+      # in-memory Prisma stand-in, which cannot demonstrate database-level
+      # serialisation. This runs `tests/recovery-concurrency.pg.test.ts`, which opens
+      # genuinely independent Prisma clients and races them for a single recovery
+      # code against this PostgreSQL 16 container.
+      #
+      # The test skips automatically when DATABASE_URL is unset, so it is a no-op in
+      # environments without a database.
+      # ---------------------------------------------------------------------
+      - name: Recovery-code concurrency (independent connections, PostgreSQL 16)
+        run: npx vitest run tests/recovery-concurrency.pg.test.ts --reporter=verbose
+
+  audit:
+    name: Dependency audit (critical and high)
+    runs-on: ubuntu-latest
+
+    # Deliberately a SEPARATE job. Previously `npm audit` was the last step of the
+    # `verify` job with `continue-on-error: true`, so once typecheck failed the audit
+    # never ran at all, and even when it did run its findings could not fail the job.
+    # Keeping it independent means the result is always produced and always visible.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit
+        id: audit
+        # No `continue-on-error`. The exit status is allowed to propagate so the
+        # result is honest. This job is EXPECTED TO FAIL while the documented
+        # Next.js App Router advisories remain open — see SECURITY.md §12.2 for the
+        # reachability analysis and the upgrade plan. Suppressing it to obtain a
+        # green badge would be exactly the wrong trade.
+        run: |
+          set +e
+          npm audit --audit-level=high
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          npm audit --json > npm-audit.json 2>/dev/null || true
+          exit $code
+
+      - name: Summarise critical and high findings
+        if: always()
+        run: |
+          {
+            echo "## Dependency audit — critical and high"
+            echo
+            echo "\`npm audit --audit-level=high\` exit code: **${{ steps.audit.outputs.exit_code }}**"
+            echo
+            echo "| Package | Severity | Direct | Advisories |"
+            echo "|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          node -e '
+            const fs=require("fs");
+            let d; try { d=JSON.parse(fs.readFileSync("npm-audit.json","utf8")); } catch(e){ process.exit(0); }
+            const order={critical:0,high:1};
+            const rows=Object.values(d.vulnerabilities||{})
+              .filter(v=>order[v.severity]!==undefined)
+              .sort((a,b)=>order[a.severity]-order[b.severity]);
+            const out=[];
+            for(const v of rows){
+              const n=(v.via||[]).filter(x=>typeof x==="object").length;
+              out.push(`| \`${v.name}\` | ${v.severity} | ${v.isDirect?"yes":"no"} | ${n} |`);
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n")+"\n");
+          ' || true
+          {
+            echo
+            echo "Full machine-readable output is attached as the \`npm-audit-json\` artifact."
+            echo
+            echo "Known, tracked findings and their mitigation rationale: **SECURITY.md §12**."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-json
+          path: npm-audit.json
+          if-no-files-found: ignore

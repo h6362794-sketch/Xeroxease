@@ -1,7 +1,11 @@
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { calculatePrice, computeSheets } from "./pricing";
 import { parsePageSelection } from "./page-selection";
-import { ORDER_TRANSITIONS, CANCELLABLE_STATUSES } from "@/lib/constants";
+import { CANCELLABLE_STATUSES } from "@/lib/constants";
+import { canActorChangeStatus, isTransitionAllowed } from "@/lib/order-status";
+
+export { canActorChangeStatus, isTransitionAllowed };
 import { audit } from "./audit";
 import { notify, NOTIFY } from "./notifications";
 
@@ -57,11 +61,18 @@ function aggregatePages(
   return { totalPages: total, perFileOk: allOk };
 }
 
+interface OrderableFile {
+  id: string;
+  pageCount: number | null;
+  analysisStatus: string;
+  orderId: string | null;
+}
+
 export async function createOrder(input: CreateOrderInput) {
   // Load files with ownership verification (IDOR protection).
-  const files = await prisma.uploadedFile.findMany({
+  const files = (await prisma.uploadedFile.findMany({
     where: { id: { in: input.fileIds }, uploaderId: input.userId },
-  });
+  })) as OrderableFile[];
   if (files.length !== input.fileIds.length) {
     throw new OrderError("One or more files could not be found or are not yours.", 403);
   }
@@ -75,12 +86,31 @@ export async function createOrder(input: CreateOrderInput) {
     throw new OrderError("Some documents are still being analyzed. Please wait a moment.", 409);
   }
 
+  // A document whose count is only an estimate must never be priced as verified.
+  // Previously a NEEDS_REVIEW file that happened to carry a pageCount slipped past
+  // this point and failed later with a misleading "No printable pages found".
+  const needsReview = files.filter(
+    (f) => f.analysisStatus === "NEEDS_REVIEW" || f.analysisStatus === "FAILED"
+  );
+  if (needsReview.length > 0) {
+    throw new OrderError(
+      "The page count for some documents could not be verified. Please confirm each page count, or ask the print desk to verify them.",
+      409
+    );
+  }
+
   const needsCount = files.filter((f) => typeof f.pageCount !== "number" || f.pageCount <= 0);
   if (needsCount.length > 0) {
     throw new OrderError(
       "Page count could not be automatically determined. Please verify the document or allow an administrator to review it.",
       409
     );
+  }
+
+  // Files must not already belong to an order (prevents double-ordering one document).
+  const alreadyOrdered = files.filter((f) => f.orderId);
+  if (alreadyOrdered.length > 0) {
+    throw new OrderError("One or more documents are already attached to an order.", 409);
   }
 
   // Custom page selection must be valid against every file's verified count.
@@ -112,41 +142,7 @@ export async function createOrder(input: CreateOrderInput) {
     table
   );
 
-  const orderNumber = await nextOrderNumber();
-
-  const order = await prisma.$transaction(async (tx) => {
-    const o = await tx.order.create({
-      data: {
-        orderNumber,
-        userId: input.userId,
-        paperSize: input.paperSize,
-        colorMode: input.colorMode,
-        sides: input.sides,
-        copies: input.copies,
-        pageSelection: input.pageSelection,
-        customPages: input.pageSelection === "CUSTOM" ? input.customPages : null,
-        totalPages,
-        billablePages: price.billablePages,
-        pricePerPage: price.pricePerPage,
-        finishingFee: price.finishingFee,
-        totalAmount: price.total,
-        status: "PAYMENT_PENDING",
-        paymentStatus: "PAYMENT_PENDING",
-        files: { connect: files.map((f) => ({ id: f.id })) },
-      },
-    });
-    await tx.orderEvent.create({
-      data: {
-        orderId: o.id,
-        type: "ORDER_PLACED",
-        toStatus: "PAYMENT_PENDING",
-        message: `Order created with ${files.length} document(s), ${totalPages} page(s).`,
-        actorId: input.userId,
-        actorRole: "STUDENT",
-      },
-    });
-    return o;
-  });
+  const order = await createOrderRow({ input, files, totalPages, price });
 
   await NOTIFY.orderCreated(input.userId, order.orderNumber, order.id);
   await audit({
@@ -155,10 +151,77 @@ export async function createOrder(input: CreateOrderInput) {
     action: "ORDER_CREATED",
     targetType: "ORDER",
     targetId: order.id,
-    metadata: { orderNumber, total: price.total, pages: totalPages },
+    metadata: { orderNumber: order.orderNumber, total: price.total, pages: totalPages },
   });
 
   return order;
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002";
+}
+
+const ORDER_NUMBER_ATTEMPTS = 5;
+
+/**
+ * The order number is allocated INSIDE the transaction. Generating it beforehand
+ * left a window where two concurrent checkouts read the same "last" number and one
+ * of them failed on the unique index. On a genuine collision we retry with a fresh
+ * number instead of surfacing a 500.
+ */
+async function createOrderRow(params: {
+  input: CreateOrderInput;
+  files: OrderableFile[];
+  totalPages: number;
+  price: { billablePages: number; pricePerPage: number; finishingFee: number; total: number };
+}) {
+  const { input, files, totalPages, price } = params;
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt < ORDER_NUMBER_ATTEMPTS; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const orderNumber = await nextOrderNumber(tx);
+        const o = await tx.order.create({
+          data: {
+            orderNumber,
+            userId: input.userId,
+            paperSize: input.paperSize,
+            colorMode: input.colorMode,
+            sides: input.sides,
+            copies: input.copies,
+            pageSelection: input.pageSelection,
+            customPages: input.pageSelection === "CUSTOM" ? input.customPages : null,
+            totalPages,
+            billablePages: price.billablePages,
+            pricePerPage: price.pricePerPage,
+            finishingFee: price.finishingFee,
+            totalAmount: price.total,
+            status: "PAYMENT_PENDING",
+            paymentStatus: "PAYMENT_PENDING",
+            files: { connect: files.map((f) => ({ id: f.id })) },
+          },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: o.id,
+            type: "ORDER_PLACED",
+            toStatus: "PAYMENT_PENDING",
+            message: `Order created with ${files.length} document(s), ${totalPages} page(s).`,
+            actorId: input.userId,
+            actorRole: "STUDENT",
+          },
+        });
+        return o;
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      lastErr = err;
+    }
+  }
+
+  console.error("[orders] exhausted order-number attempts", lastErr);
+  throw new OrderError("Could not allocate an order number. Please try again.", 503);
 }
 
 async function getPriceTableSafe() {
@@ -170,11 +233,28 @@ async function getPriceTableSafe() {
   return table;
 }
 
-/** Human-readable sequential order number: XE-YYYY-NNNNNN */
-export async function nextOrderNumber(): Promise<string> {
+/**
+ * Minimal transaction-client surface required to allocate an order number.
+ *
+ * Derived from the generated Prisma client rather than hand-written. A structural
+ * type such as `{ findFirst: (args: { where: unknown }) => ... }` does NOT accept
+ * the real client: Prisma's `findFirst` is generic over a narrow argument type, and
+ * because function parameters are contravariant, a delegate accepting only
+ * `OrderFindFirstArgs` is not assignable to one that must accept `unknown`. That
+ * mismatch is invisible with a permissive stub client but fails against the real
+ * generated types (see CI job "Typecheck, lint, test and build").
+ */
+type OrderNumberClient = Pick<Prisma.TransactionClient, "order">;
+
+/**
+ * Human-readable sequential order number: XE-YYYY-NNNNNN.
+ * Pass the transaction client so the number is reserved inside the creating
+ * transaction rather than raced against it.
+ */
+export async function nextOrderNumber(tx: OrderNumberClient = prisma): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `XE-${year}-`;
-  const last = await prisma.order.findFirst({
+  const last = await tx.order.findFirst({
     where: { orderNumber: { startsWith: prefix } },
     orderBy: { orderNumber: "desc" },
   });
@@ -183,19 +263,6 @@ export async function nextOrderNumber(): Promise<string> {
   return `${prefix}${String(next).padStart(6, "0")}`;
 }
 
-const ALLOWED_STATUS_ACTORS: Record<string, string[]> = {
-  ADMIN: ["*"],
-  SUPER_ADMIN: ["*"],
-  STUDENT: [],
-};
-
-export function canActorChangeStatus(role: string): boolean {
-  return ALLOWED_STATUS_ACTORS[role]?.includes("*") ?? false;
-}
-
-export function isTransitionAllowed(from: string, to: string): boolean {
-  return (ORDER_TRANSITIONS[from] || []).includes(to);
-}
 
 export async function adminUpdateOrderStatus(params: {
   orderId: string;
@@ -217,14 +284,19 @@ export async function adminUpdateOrderStatus(params: {
   const patch: Record<string, unknown> = { status: params.toStatus };
   const now = new Date();
   if (params.toStatus === "COMPLETED") patch.completedAt = now;
-  if (params.toStatus === "READY_FOR_COLLECTION") {
-    const { attachCollectionToken } = await import("./collection");
-    await attachCollectionToken(order.id);
-  }
   if (params.toStatus === "CANCELLED") {
     patch.cancelledAt = now;
     patch.cancelledBy = params.actorId;
     patch.cancelReason = params.note ?? null;
+  }
+  if (params.toStatus === "READY_FOR_COLLECTION") {
+    // Attach the collection token inside the same transaction as the status change:
+    // a partially applied update used to leave a live collection code on an order
+    // that never actually reached READY_FOR_COLLECTION.
+    const { signCollectionToken, hashCollectionToken } = await import("./collection");
+    const token = signCollectionToken(order.id);
+    patch.collectionTokenHash = hashCollectionToken(token);
+    patch.collectionTokenUsedAt = null;
   }
 
   await prisma.$transaction(async (tx) => {

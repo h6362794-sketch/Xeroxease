@@ -6,11 +6,11 @@ import { audit } from "@/server/audit";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string; fileId: string } }
+  { params }: { params: Promise<{ id: string; fileId: string }> }
 ) {
   return withErrorHandling(async () => {
     const user = await requireRole("ADMIN", "SUPER_ADMIN");
-    const { id, fileId } = params;
+    const { id, fileId } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id) || !/^[0-9a-f-]{36}$/i.test(fileId)) {
       return apiError("Invalid identifiers.", 400);
     }

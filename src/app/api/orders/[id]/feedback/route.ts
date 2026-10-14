@@ -5,13 +5,13 @@ import { RATE_LIMITS } from "@/server/rate-limit";
 import { feedbackSchema } from "@/server/validation";
 import { audit } from "@/server/audit";
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const user = await requireUser();
-    const limited = enforceRateLimit(req, RATE_LIMITS.feedback, "feedback");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.feedback, "feedback");
     if (limited) return limited;
 
-    const { id } = params;
+    const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) return apiError("Invalid order id.", 400);
 
     const data = await parseBody(req, feedbackSchema);

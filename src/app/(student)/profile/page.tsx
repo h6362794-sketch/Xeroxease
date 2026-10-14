@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireUser } from "@/server/auth";
+import { requirePageUser } from "@/server/auth";
 import { prisma } from "@/lib/prisma";
 import { Card } from "@/components/ui";
 import { Mail, Phone, Hash, GraduationCap, KeyRound, LifeBuoy, ShieldCheck } from "lucide-react";
@@ -7,7 +7,7 @@ import { Mail, Phone, Hash, GraduationCap, KeyRound, LifeBuoy, ShieldCheck } fro
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage() {
-  const session = await requireUser();
+  const session = await requirePageUser();
   const user = await prisma.user.findUnique({
     where: { id: session.id },
     select: { name: true, email: true, phone: true, regNo: true, branch: true, section: true, year: true, createdAt: true },
@@ -39,7 +39,10 @@ export default async function ProfilePage() {
       <Card className="space-y-3">
         <h2 className="font-bold text-white">Account & support</h2>
         <Link href="/forgot-password" className="flex items-center gap-3 rounded-xl px-3 py-3 hover:bg-white/5 transition-colors text-sm text-zinc-200">
-          <KeyRound className="h-4 w-4 text-zinc-500" /> Change password
+          <KeyRound className="h-4 w-4 text-zinc-500" /> Reset password with a recovery code
+        </Link>
+        <Link href="/security" className="flex items-center gap-3 rounded-xl px-3 py-3 hover:bg-white/5 transition-colors text-sm text-zinc-200">
+          <ShieldCheck className="h-4 w-4 text-zinc-500" /> Security &amp; recovery code
         </Link>
         <a href="mailto:support@xeroxease.app" className="flex items-center gap-3 rounded-xl px-3 py-3 hover:bg-white/5 transition-colors text-sm text-zinc-200">
           <LifeBuoy className="h-4 w-4 text-zinc-500" /> Help & support

@@ -10,10 +10,10 @@ function esc(s: string | null | undefined): string {
   return (s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 }
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const user = await requireUser();
-    const { id } = params;
+    const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) return apiError("Invalid order id.", 400);
 
     const order = await prisma.order.findUnique({
@@ -28,9 +28,9 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       return apiError("You do not have access to this invoice.", 403);
     }
 
-    const finishing = order.customPages
-      ? []
-      : [Number(order.finishingFee) > 0 ? "Finishing applied" : null].filter(Boolean) as string[];
+    // Finishing is driven by the fee actually charged, not by whether a custom page
+    // range was used (the previous condition hid the line item for custom ranges).
+    const finishing = Number(order.finishingFee) > 0 ? ["Finishing applied"] : [];
 
     const rows = order.files
       .map(

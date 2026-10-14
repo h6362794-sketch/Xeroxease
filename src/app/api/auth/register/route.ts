@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   return withErrorHandling(async () => {
-    const limited = enforceRateLimit(req, RATE_LIMITS.register, "register");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.register, "register");
     if (limited) return limited;
 
     const data = await parseBody(req, registerSchema);

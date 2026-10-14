@@ -5,10 +5,10 @@ import { readBuffer, fileExists } from "@/server/storage";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const user = await requireUser();
-    const { id } = params;
+    const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) return apiError("Invalid file id.", 400);
 
     const file = await prisma.uploadedFile.findUnique({ where: { id } });

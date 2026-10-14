@@ -4,13 +4,13 @@ import { RATE_LIMITS } from "@/server/rate-limit";
 import { cancelSchema } from "@/server/validation";
 import { cancelOrder } from "@/server/orders";
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const user = await requireUser();
-    const limited = enforceRateLimit(req, RATE_LIMITS.cancel, "cancel");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.cancel, "cancel");
     if (limited) return limited;
 
-    const { id } = params;
+    const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
       const err = new Error("Invalid order id.");
       (err as Error & { status?: number }).status = 400;

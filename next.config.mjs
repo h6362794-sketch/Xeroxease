@@ -5,13 +5,16 @@ const nextConfig = {
   },
   poweredByHeader: false,
   reactStrictMode: true,
-  // NOTE: The project currently lives on a FAT32 drive (D:) whose filesystem is
-  // flagged "dirty / full repair needed". Node's fs.readlink() returns EISDIR for
-  // regular files there, which crashes Next.js's output file tracing during build
-  // (Error: EISDIR: illegal operation on a directory, readlink '...').
-  // Disabling tracing keeps production builds working on this machine.
-  // IMPORTANT: run `chkdsk D: /f` and preferably move the project to an NTFS drive;
-  // then this workaround can be removed.
+  // Historical note: the project once ran from a FAT32 volume whose dirty
+  // filesystem made Node's fs.readlink() return EISDIR for regular files, which
+  // crashed Next.js output-file tracing during `next build`. The workaround used
+  // then was a `fs-eisdir-shim.cjs` preload that the scripts referenced -- but the
+  // shim was never committed and was listed in .gitignore, so `npm run dev` and
+  // `npm run build` failed outright on a clean checkout.
+  //
+  // The build no longer depends on any shim. If output-file tracing ever needs to
+  // be disabled again, set NEXT_DISABLE_FILE_TRACING=1 (see below) instead of
+  // introducing an untracked preload file.
   ...(process.env.NEXT_DISABLE_FILE_TRACING === "1"
     ? { experimental: { outputFileTracingExcludes: { "*": ["**"] } } }
     : {}),

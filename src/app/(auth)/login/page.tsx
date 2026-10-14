@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -13,6 +13,16 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Read the query string on the client so the page stays statically renderable
+  // (useSearchParams would force a Suspense boundary for a cosmetic banner).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("reset") === "1") {
+      setNotice("Password reset. Sign in with your new password, then generate a fresh recovery code.");
+    }
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,6 +44,12 @@ export default function LoginPage() {
       <h1 className="text-2xl font-extrabold text-white tracking-tight">Welcome back</h1>
       <p className="text-sm text-zinc-400 mt-1.5 mb-8">Sign in to your XeroxEase account.</p>
 
+      {notice && (
+        <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-sm text-emerald-200">
+          {notice}
+        </div>
+      )}
+
       <form onSubmit={onSubmit} className="space-y-5" noValidate>
         <div>
           <Label htmlFor="identifier" required>Email or Registration Number</Label>
@@ -50,7 +66,7 @@ export default function LoginPage() {
           <div className="flex items-center justify-between">
             <Label htmlFor="password" required>Password</Label>
             <Link href="/forgot-password" className="text-xs text-[#b49aff] hover:text-[#7c5cff] transition-colors mb-1.5">
-              Forgot password?
+              Forgot password? Use your recovery code
             </Link>
           </div>
           <Input

@@ -10,7 +10,7 @@ const LOCK_MINUTES = 15;
 
 export async function POST(req: Request) {
   return withErrorHandling(async () => {
-    const limited = enforceRateLimit(req, RATE_LIMITS.login, "login");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.login, "login");
     if (limited) return limited;
 
     const data = await parseBody(req, loginSchema);

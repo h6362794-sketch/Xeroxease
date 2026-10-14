@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { env } from "@/server/env";
 import { SESSION_COOKIE } from "@/lib/constants";
@@ -141,6 +142,25 @@ export async function requireUser(): Promise<SessionUser> {
     (err as Error & { status?: number }).status = 401;
     throw err;
   }
+  return user;
+}
+
+/**
+ * Guard for **page** components (Server Components).
+ *
+ * Server pages must redirect rather than throw. A layout and its page render
+ * concurrently in the App Router, so a page that throws a plain Error races the
+ * layout's `redirect()` and produces a noisy server-side stack trace (and, if the
+ * error wins, an error-boundary page instead of the login redirect). Redirecting
+ * from the page as well is both quieter and defence-in-depth: the page keeps
+ * working even if the enclosing layout guard is ever removed or changed.
+ *
+ * API routes should keep using `requireUser()` / `requireRole()`, which correctly
+ * return 401/403 instead of an HTML redirect.
+ */
+export async function requirePageUser(redirectTo = "/login"): Promise<SessionUser> {
+  const user = await getSessionUser();
+  if (!user) redirect(redirectTo);
   return user;
 }
 

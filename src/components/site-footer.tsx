@@ -15,9 +15,9 @@ export function SiteFooter() {
           <div>
             <p className="text-sm font-semibold text-white mb-3">Product</p>
             <ul className="space-y-2 text-sm text-zinc-400">
-              <li><a href="/#how" className="hover:text-white transition-colors">How it works</a></li>
-              <li><a href="/#pricing-section" className="hover:text-white transition-colors">Pricing</a></li>
-              <li><a href="/#faq" className="hover:text-white transition-colors">FAQ</a></li>
+                <li><Link href="/#how" className="hover:text-white transition-colors">How it works</Link></li>
+                <li><Link href="/#pricing-section" className="hover:text-white transition-colors">Pricing</Link></li>
+                <li><Link href="/#faq" className="hover:text-white transition-colors">FAQ</Link></li>
             </ul>
           </div>
           <div>

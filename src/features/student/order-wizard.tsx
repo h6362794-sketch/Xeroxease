@@ -51,6 +51,8 @@ export function OrderWizard({ userId }: { userId: string }) {
   const [reference, setReference] = useState("");
   const [payState, setPayState] = useState<"WAITING" | "SUBMITTED">("WAITING");
   const [error, setError] = useState<string | null>(null);
+  const [pageCountDraft, setPageCountDraft] = useState<Record<string, string>>({});
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   const allAnalyzed = files.length > 0 && files.every((f) => f.analysisStatus === "COMPLETED" || f.analysisStatus === "NEEDS_REVIEW");
   const anyNeedsReview = files.some((f) => f.analysisStatus === "NEEDS_REVIEW" || f.analysisStatus === "FAILED");
@@ -81,6 +83,43 @@ export function OrderWizard({ userId }: { userId: string }) {
     load();
     return () => controller.abort();
   }, [step, canConfigure, files, config]);
+
+  // Lets the student confirm a page count when automatic analysis was inconclusive
+  // (legacy .doc, PDFs with an unreadable page tree, metadata-less .docx). Without
+  // this the review state is a dead end and the order can never be placed.
+  const confirmPageCount = async (fileId: string) => {
+    const raw = (pageCountDraft[fileId] ?? "").trim();
+    const parsed = Number(raw);
+    if (!raw || !Number.isInteger(parsed) || parsed < 1 || parsed > 10000) {
+      toast("Enter a whole page count between 1 and 10000.", "error");
+      return;
+    }
+    setConfirmingId(fileId);
+    setError(null);
+    try {
+      await api<{ ok: boolean; pageCount: number }>(`/api/documents/${fileId}/pagecount`, {
+        method: "PATCH",
+        body: JSON.stringify({ pageCount: parsed }),
+      });
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === fileId
+            ? { ...f, pageCount: parsed, analysisStatus: "COMPLETED", analysisError: null, source: "USER_CONFIRMED" }
+            : f
+        )
+      );
+      setPageCountDraft((prev) => {
+        const next = { ...prev };
+        delete next[fileId];
+        return next;
+      });
+      toast("Page count confirmed.", "success");
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Could not save the page count.", "error");
+    } finally {
+      setConfirmingId(null);
+    }
+  };
 
   const uploadFiles = useCallback(
     async (list: FileList | File[]) => {
@@ -315,7 +354,26 @@ export function OrderWizard({ userId }: { userId: string }) {
                       ) : f.analysisStatus === "PENDING" || f.analysisStatus === "PROCESSING" ? (
                         <Loader2 className="h-4 w-4 animate-spin text-zinc-500 ml-auto" />
                       ) : (
-                        <span className="text-xs font-semibold text-amber-400">Needs review</span>
+                        <div className="flex items-center justify-end gap-2 mt-1">
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            max={10000}
+                            step={1}
+                            value={pageCountDraft[f.id] ?? ""}
+                            onChange={(e) => setPageCountDraft((prev) => ({ ...prev, [f.id]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") confirmPageCount(f.id);
+                            }}
+                            aria-label={`Page count for ${f.originalName}`}
+                            placeholder="Pages"
+                            className="w-24 rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-sm text-white placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7c5cff]/60"
+                          />
+                          <Button size="sm" variant="ghost" onClick={() => confirmPageCount(f.id)} loading={confirmingId === f.id}>
+                            Confirm
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -326,8 +384,9 @@ export function OrderWizard({ userId }: { userId: string }) {
                 <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
                   <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
                   <p className="text-xs text-amber-200">
-                    Some documents need administrator verification before ordering. You can remove them, or
-                    contact the print desk to have their page counts confirmed.
+                    Some documents need a page count before ordering. Enter the page count and press{" "}
+                    <span className="font-semibold">Confirm</span>, remove the document, or contact the print
+                    desk to have the count verified.
                   </p>
                 </div>
               )}

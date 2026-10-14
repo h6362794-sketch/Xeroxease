@@ -47,13 +47,30 @@ export const adminLoginSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
-export const forgotPasswordSchema = z.object({
-  email: z.string().trim().toLowerCase().email(),
+/**
+ * Recovery-code reset. `identifier` must resolve to the account that owns the
+ * code, so a code found on its own is not enough to take over an account.
+ */
+export const recoveryResetSchema = z.object({
+  identifier: z.string().trim().min(2).max(160),
+  // 32 base32 characters, optionally grouped with spaces or dashes.
+  recoveryCode: z
+    .string()
+    .trim()
+    .min(8)
+    .max(120)
+    .transform((value) => value.toUpperCase().replace(/[^0-9A-Z]/g, ""))
+    .refine((value) => value.length === 32, "Recovery code must be 32 characters"),
+  password,
 });
 
-export const resetPasswordSchema = z.object({
-  token: z.string().min(10).max(200),
-  password,
+/**
+ * Generating or rotating a recovery code re-authenticates with the current
+ * password: the code is a full account-takeover credential, so it must not be
+ * issuable by anyone who merely holds a stolen session cookie.
+ */
+export const recoveryCodeIssueSchema = z.object({
+  password: z.string().min(1).max(200),
 });
 
 export const finishingEnum = z.enum(FINISHING_OPTIONS);
@@ -97,6 +114,10 @@ export const pricingUpdateSchema = z.object({
 export const adminStatusUpdateSchema = z.object({
   status: z.string().min(4).max(40),
   note: z.string().trim().max(500).optional().or(z.literal("")),
+});
+
+export const pageCountConfirmSchema = z.object({
+  pageCount: z.coerce.number().int().min(1, "Page count must be at least 1").max(10000, "Page count is unrealistically large"),
 });
 
 export const pageCorrectionSchema = z.object({

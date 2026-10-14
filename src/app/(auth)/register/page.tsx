@@ -41,7 +41,9 @@ export default function RegisterPage() {
         method: "POST",
         json: { ...form, year: Number(form.year) },
       });
-      router.push("/login?registered=1");
+      // Registration does not create a session, so the recovery-code setup prompt
+      // lives on the dashboard (it appears the first time they sign in).
+      router.push("/login?registered=1&setup=recovery");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
     } finally {

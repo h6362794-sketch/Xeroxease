@@ -19,7 +19,12 @@ export function middleware(req: NextRequest) {
     "media-src 'self'",
     "font-src 'self' data:",
     "connect-src 'self'" + (process.env.NODE_ENV === "development" ? " ws: wss:" : ""),
-    "frame-ancestors 'none'",
+    // Framing is denied in production. Development may opt in (embedded previews,
+    // Storybook-style tooling) with ALLOW_DEV_FRAME_EMBED=true -- never set this in
+    // a deployed environment.
+    ...(process.env.NODE_ENV === "development" && process.env.ALLOW_DEV_FRAME_EMBED === "true"
+      ? []
+      : ["frame-ancestors 'none'"]),
     "base-uri 'self'",
     "form-action 'self'",
     "object-src 'none'",
@@ -27,7 +32,9 @@ export function middleware(req: NextRequest) {
 
   res.headers.set("Content-Security-Policy", csp);
   res.headers.set("X-Content-Type-Options", "nosniff");
-  res.headers.set("X-Frame-Options", "DENY");
+  if (!(process.env.NODE_ENV === "development" && process.env.ALLOW_DEV_FRAME_EMBED === "true")) {
+    res.headers.set("X-Frame-Options", "DENY");
+  }
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
   res.headers.set("X-DNS-Prefetch-Control", "off");

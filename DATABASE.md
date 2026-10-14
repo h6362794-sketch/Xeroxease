@@ -13,7 +13,8 @@ User 1─n UploadedFile         (uploader records)
 User 1─n Notification
 User 1─n Feedback
 User 1─n AuditLog             (actor)
-User 1─n PasswordResetToken
+User 1─n RecoveryCode        -- active recovery mechanism (one live code per user)
+User 1─n PasswordResetToken   -- DEPRECATED: unused, retained only to avoid a destructive drop
 
 Order 1─n UploadedFile        (files attached to an order)
 Order 1─n OrderEvent          (status timeline events)
@@ -27,7 +28,8 @@ Order 1─1 Feedback            (unique per order)
 |---|---|---|
 | `users` | Accounts for all roles | `email_norm` (unique), `phone` (unique), `reg_no` (unique), `password_hash`, `role`, `is_active`, `failed_login_count`, `locked_until` |
 | `sessions` | Server-side sessions | `token_hash` (unique), `kind`, `expires_at`, `revoked_at` |
-| `password_reset_tokens` | Single-use reset tokens | `token_hash`, `expires_at`, `used_at` |
+| `recovery_codes` | Email-free account recovery | `user_id` (unique — one live code per account), `code_hash` (unique), `created_by` (null = self, else admin id), `expires_at` (null for self-issued), `used_at` |
+| `password_reset_tokens` | **DEPRECATED** — backed the removed email-link reset; no longer read or written | `token_hash`, `expires_at`, `used_at` |
 | `orders` | Print orders | `order_number` (unique `XE-YYYY-NNNNNN`), print config, **server-verified** `total_pages` / `billable_pages` / `total_amount`, `status`, `payment_status`, `collection_token_hash`, `collection_token_used_at` |
 | `uploaded_files` | Document metadata | `storage_key` (unique), `original_name`, `mime_type`, `size_bytes`, `page_count`, `page_count_source`, `analysis_status`, `analyzed_at` |
 | `order_events` | Immutable status timeline | `type`, `from_status`, `to_status`, `actor_id`, `actor_role` |
@@ -49,17 +51,40 @@ Order 1─1 Feedback            (unique per order)
 ## Integrity & performance
 
 - **Foreign keys** with `ON DELETE CASCADE` for owned records (sessions, files, events, feedback, notifications)
-- **Unique constraints**: email, phone, reg no, order number, storage key, session token hash, one feedback per order
+- **Unique constraints**: email, phone, reg no, order number, storage key, session token hash, one feedback per order, one recovery code per user (`recovery_codes.user_id`)
 - **Indexes** on: `orders(userId, status)`, `orders(status)`, `orders(paymentStatus)`, `orders(createdAt)`, `orders(orderNumber)`, `sessions(userId, expiresAt)`, `notifications(userId, isRead)`, `audit_logs(action, createdAt)`, and more
-- **Transactions** (`prisma.$transaction`) for order creation, status changes, payment verification/rejection, cancellation, password reset — no partially-created orders
+- **Transactions** (`prisma.$transaction`) for order creation, status changes, payment verification/rejection, cancellation, recovery-code redemption — no partially-created orders
 
 ## Migrations
 
+The migration history is committed in `prisma/migrations/` and is the source of truth for schema changes.
+
 ```bash
-npx prisma migrate dev --name <name>    # develop (creates migration SQL)
-npx prisma migrate deploy               # production (applies pending migrations)
-npx prisma studio                       # browse data
+npx prisma migrate dev --name <name>    # develop (creates migration SQL — commit the generated file)
+npx prisma migrate deploy               # production (applies pending migrations only)
+npx prisma migrate status               # show which migrations are applied
+npx prisma generate                     # regenerate Prisma Client — makes NO database changes
+npx prisma studio                       # browse data (never expose publicly)
 ```
+
+Keep the two steps separate in CI/CD: `prisma generate` is a build step (needs no database), `prisma migrate deploy` is a release step (needs the database).
+
+### Existing databases (no migration history)
+
+If this schema was previously created with `prisma db push`, the tables exist but `_prisma_migrations` is empty. Running `migrate deploy` would try to recreate them and fail. Baseline it once — this **only records the migration as applied** and modifies no data:
+
+```bash
+npx prisma migrate resolve --applied 20261013000000_init
+npx prisma migrate status     # should report: Database schema is up to date
+```
+
+### Initial migration
+
+`prisma/migrations/20261013000000_init/migration.sql` creates every table, enum, index and foreign key declared in `prisma/schema.prisma`.
+
+### Rollback planning
+
+Prisma migrations are forward-only. To reverse a change, write and commit a **new** migration that undoes it. Never edit an already-applied migration file. Never run `prisma migrate reset`, `prisma db push --force-reset` or `DROP TABLE` against production data.
 
 Connection config uses `DATABASE_URL` (runtime, pooler-friendly) and `DIRECT_URL` (migrations) — see `.env.example`.
 
@@ -73,4 +98,4 @@ Connection config uses `DATABASE_URL` (runtime, pooler-friendly) and `DIRECT_URL
 ## Data retention
 
 - Configurable via Super Admin → Settings (`retentionDays`, default 30): completed-order files may be purged after N days while order metadata is retained for accounting.
-- Sessions and reset tokens expire automatically (`expiresAt`) and can be swept by a periodic job.
+- Sessions expire automatically (`expiresAt`) and can be swept by a periodic job. Recovery codes never expire unless an administrator issued them (`expires_at` is null for self-generated codes); a used code stays in its row with `used_at` set so the account shows "code used" and can be prompted to rotate it.
