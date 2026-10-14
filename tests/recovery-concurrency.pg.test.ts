@@ -18,9 +18,17 @@
 // clause against the newly committed row, finds `used_at IS NOT NULL`, and matches
 // 0 rows. Exactly one redemption therefore wins.
 //
-// SKIP BEHAVIOUR: requires DATABASE_URL. Without it the suite skips rather than
-// fails, so `npm test` stays green in environments with no database. CI runs it in
-// the `migrations` job, which has a PostgreSQL 16 service container.
+// SKIP BEHAVIOUR: requires an explicit opt-in, `PG_INTEGRATION_TESTS=1`, AND a
+// DATABASE_URL.
+//
+// The opt-in is deliberate. Databases are commonly named in DATABASE_URL even in jobs
+// with no database running — the CI `verify` job sets DATABASE_URL for the build but
+// has no Postgres service. Gating on DATABASE_URL alone made this file try to connect
+// there and fail the whole unit-test run. Requiring an explicit flag means only the
+// `migrations` job, which really has a PostgreSQL 16 container, enables it.
+//
+// Without the flag the suite skips rather than fails, so `npm test` stays green in
+// environments with no database.
 //
 // SAFETY: creates its own uniquely-suffixed rows and deletes them in afterAll. It
 // never touches pre-existing data. Point it only at a disposable database.
@@ -28,7 +36,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "";
-const ENABLED = DATABASE_URL.length > 0;
+const ENABLED = DATABASE_URL.length > 0 && process.env.PG_INTEGRATION_TESTS === "1";
 
 // `@prisma/client` is imported LAZILY, not at module scope. A top-level import would
 // throw "Cannot find module '.prisma/client/default'" in any environment where the

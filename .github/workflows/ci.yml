@@ -68,6 +68,11 @@ jobs:
       DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
       SESSION_SECRET: "ci-only-secret-value-that-is-at-least-32-chars"
       SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci_shadow"
+      # Opt-in for tests/recovery-concurrency.pg.test.ts. Set ONLY here: this is the
+      # only job with a real PostgreSQL service. The `verify` job also defines
+      # DATABASE_URL but has no database, so the flag keeps the integration test from
+      # running there.
+      PG_INTEGRATION_TESTS: "1"
 
     steps:
       - uses: actions/checkout@v4
