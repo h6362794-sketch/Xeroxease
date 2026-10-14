@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { calculatePrice, computeSheets } from "./pricing";
 import { parsePageSelection } from "./page-selection";
 import { CANCELLABLE_STATUSES } from "@/lib/constants";
@@ -232,17 +233,25 @@ async function getPriceTableSafe() {
   return table;
 }
 
-/** Minimal transaction-client surface required to allocate an order number. */
-type OrderNumberClient = {
-  order: { findFirst: (args: { where: unknown; orderBy: unknown }) => Promise<{ orderNumber: string } | null> };
-};
+/**
+ * Minimal transaction-client surface required to allocate an order number.
+ *
+ * Derived from the generated Prisma client rather than hand-written. A structural
+ * type such as `{ findFirst: (args: { where: unknown }) => ... }` does NOT accept
+ * the real client: Prisma's `findFirst` is generic over a narrow argument type, and
+ * because function parameters are contravariant, a delegate accepting only
+ * `OrderFindFirstArgs` is not assignable to one that must accept `unknown`. That
+ * mismatch is invisible with a permissive stub client but fails against the real
+ * generated types (see CI job "Typecheck, lint, test and build").
+ */
+type OrderNumberClient = Pick<Prisma.TransactionClient, "order">;
 
 /**
  * Human-readable sequential order number: XE-YYYY-NNNNNN.
  * Pass the transaction client so the number is reserved inside the creating
  * transaction rather than raced against it.
  */
-export async function nextOrderNumber(tx: OrderNumberClient = prisma as unknown as OrderNumberClient): Promise<string> {
+export async function nextOrderNumber(tx: OrderNumberClient = prisma): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `XE-${year}-`;
   const last = await tx.order.findFirst({

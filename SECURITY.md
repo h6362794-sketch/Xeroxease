@@ -228,3 +228,23 @@ after : content-security-policy: default-src 'self'; ... frame-ancestors 'none';
 **Regression guard:** `tests/security-headers.test.ts` asserts the file location and the
 header values, including that HSTS appears only in production and that `ALLOW_DEV_FRAME_EMBED`
 cannot weaken production. Reintroducing the old file location fails 6 of its 7 tests.
+
+### 12.4 CI dependency-audit job status
+
+The `audit` job in `.github/workflows/ci.yml` runs `npm audit --audit-level=high`
+**without `continue-on-error`**, so its exit status is honest: it fails while any
+high or critical finding remains.
+
+That means **this job is expected to fail until the Next.js upgrade lands** (§12.2).
+This is deliberate. The previous arrangement — `npm audit` as the last step of the
+`verify` job with `continue-on-error: true` — had two defects: the step never ran at
+all once typecheck failed, and even when it did run, its findings could not fail the
+job. A green badge obtained by suppressing a critical finding is worth less than a
+red one that is accurate.
+
+The job always publishes a markdown summary of every critical/high finding and
+uploads the full `npm audit --json` as the `npm-audit-json` artifact, so the result
+is inspectable without re-running anything.
+
+Do not "fix" a failing audit job by adding broad dependency overrides or by
+re-introducing `continue-on-error`. Remediate §12.2 or record an accepted risk here.

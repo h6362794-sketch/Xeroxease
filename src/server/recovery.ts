@@ -10,6 +10,7 @@
 
 import { createHash, randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
+import type { PrismaClient } from "@prisma/client";
 import { sha256 } from "./auth";
 
 /** Crockford base32: no I, L, O or U, so codes are unambiguous when read aloud. */
@@ -137,30 +138,46 @@ export type RedeemResult = { ok: true; userId: string } | { ok: false };
  * one generic message — the endpoint must not reveal whether the account exists,
  * whether it has a code, or whether that code was already used or expired.
  */
-export async function redeemRecoveryCode(params: {
-  identifier: string;
-  code: string;
-  newPasswordHash: string;
-}): Promise<RedeemResult> {
+/**
+ * Client surface required to redeem a code.
+ *
+ * An injectable client exists so the concurrency guarantee can be tested against a
+ * real PostgreSQL database using SEPARATE connections. The in-memory unit tests only
+ * prove the application-level guard; they cannot demonstrate that PostgreSQL itself
+ * serialises two concurrent `UPDATE ... WHERE used_at IS NULL` statements, because
+ * there is no row locking or MVCC in a JavaScript array. See
+ * `tests/recovery-concurrency.pg.test.ts`.
+ */
+export type RecoveryClient = Pick<PrismaClient, "recoveryCode" | "user" | "$transaction">;
+
+export async function redeemRecoveryCode(
+  params: {
+    identifier: string;
+    code: string;
+    newPasswordHash: string;
+  },
+  /** Defaults to the shared singleton. Tests pass a dedicated client/connection. */
+  client: RecoveryClient = prisma
+): Promise<RedeemResult> {
   const normalized = normalizeRecoveryCode(params.code);
   if (!RECOVERY_CODE_SHAPE.test(normalized)) return { ok: false };
 
   const codeHash = hashRecoveryCode(normalized);
-  const record = await prisma.recoveryCode.findUnique({ where: { codeHash } });
+  const record = await client.recoveryCode.findUnique({ where: { codeHash } });
   if (!record) return { ok: false };
   if (record.usedAt) return { ok: false };
   if (record.expiresAt && record.expiresAt < new Date()) return { ok: false };
 
   // The code must belong to the account being recovered, not merely exist.
   const identifier = params.identifier.trim().toLowerCase();
-  const user = await prisma.user.findFirst({
+  const user = await client.user.findFirst({
     where: { OR: [{ emailNorm: identifier }, { regNo: params.identifier.trim().toUpperCase() }] },
     select: { id: true, isActive: true },
   });
   if (!user || !user.isActive || user.id !== record.userId) return { ok: false };
 
   const now = new Date();
-  const applied = await prisma.$transaction(async (tx) => {
+  const applied = await client.$transaction(async (tx) => {
     const { count } = await tx.recoveryCode.updateMany({
       where: {
         id: record.id,

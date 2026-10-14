@@ -187,7 +187,13 @@ model RecoveryCode {
   user   User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   issuer User? @relation("RecoveryCodeIssuer", fields: [createdBy], references: [id], onDelete: SetNull)
 
-  @@index([userId])
+  // No @@index([userId]) here on purpose. `userId` is already @unique, which
+  // creates a B-tree unique index on that column; a second non-unique index over
+  // the same column would be strictly redundant — it serves no lookup the unique
+  // index does not already serve, and only adds write amplification. Declaring it
+  // without a matching CREATE INDEX also desynchronises schema.prisma from the
+  // migrations, which is exactly what `prisma migrate diff --exit-code` reported
+  // ("Changed the recovery_codes table: Added index on columns (user_id)").
   @@map("recovery_codes")
 }
 

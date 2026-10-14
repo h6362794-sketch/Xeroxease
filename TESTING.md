@@ -20,7 +20,10 @@ Current suite: **100 tests, 10 files** — all passing (`npm test`).
 | `tests/file-validation.test.ts` | Upload security: traversal stripping, control chars, double extensions (exe-renamed-to-pdf), MIME mismatch, **magic-byte spoofing rejection**, size limits, octet-stream handling |
 | `tests/order-rules.test.ts` | Status machine: legal transitions, skipped stages, terminal states, unknown states, cancellable windows |
 | `tests/collection-token.test.ts` | **QR collection atomicity**: single-use, exactly one of 8 concurrent scans wins, not-ready / unknown / replayed tokens, verify-only never mutates |
-| `tests/recovery.test.ts` | **Recovery-code lifecycle** (30): 160-bit entropy, Crockford alphabet, normalisation, hash-only storage, atomic rotation with rollback, single-use under 8 concurrent redemptions, code-to-account binding, expiry, session revocation, lockout clearing, identical failure responses for every failure mode |
+  | `tests/recovery.test.ts` | **Recovery-code lifecycle** (30): 160-bit entropy, Crockford alphabet, normalisation, hash-only storage, atomic rotation with rollback, single-use under 8 concurrent redemptions **against a mocked in-memory client**, code-to-account binding, expiry, session revocation, lockout clearing, identical failure responses for every failure mode |
+  | `tests/recovery-concurrency.pg.test.ts` | **Recovery-code concurrency against real PostgreSQL** (4): 8 **independent database connections** race for one code; asserts exactly one winner, one password change, the code is spent, and all sessions revoked. Skips when `DATABASE_URL` is unset; CI runs it on PostgreSQL 16. **This — not the mocked test — is what proves the database serialises concurrent redemptions.** |
+  | `tests/migration-index.test.ts` | **Schema/migration index drift** (4): `RecoveryCode` must not declare a redundant `@@index` over a `@unique` column; re-introducing that exact drift makes `npm run schema:check` fail. Regression guard for the drift the first CI run caught. |
+  | `tests/security-headers.test.ts` | **Security-header middleware** (7): the file lives at `src/middleware.ts` (a root-level `middleware.ts` is silently ignored by Next.js), CSP/HSTS/framing headers are set, HSTS is production-only, and `ALLOW_DEV_FRAME_EMBED` cannot weaken production |
 | `tests/request-security.test.ts` | **Request-level security** (14): `getClientIp` reads `TRUSTED_PROXY_COUNT` hops from the right so forged `X-Forwarded-For` prefixes cannot pick a rate-limit bucket; the bounded multipart stream rejects an oversized body even when `Content-Length` lies |
 | `tests/doc-analysis.test.ts` | **Analysis accuracy**: authoritative `<Pages>`/slide parts, page-break estimate forced to `NEEDS_REVIEW`, malformed/truncated ZIP safety, legacy `.doc` review state |
 | `tests/storage-key.test.ts` | **Storage-key safety**: path traversal, absolute paths, control chars, hidden-file prefixes, per-owner scoping, collision-free keys |
@@ -38,8 +41,9 @@ The suite directly asserts the security behaviors required by the spec:
 - ✅ **Terminal states**: COMPLETED/CANCELLED/FAILED cannot transition
 - ✅ **Price integrity**: server engine is the only calculator; client input absent from `calculatePrice`
 - ✅ **Unverified page counts are never priced**: a `NEEDS_REVIEW` document is rejected at order creation even if it carries an estimate
-- ✅ **Single-use QR collection**: 8 concurrent scans of the same code produce exactly 1 fulfilled order
-- ✅ **Single-use recovery codes**: 8 concurrent redemptions produce exactly 1 password change
+  - ✅ **Single-use QR collection**: 8 concurrent scans of the same code produce exactly 1 fulfilled order *(mocked in-memory client — proves the application guard, not database serialisation)*
+  - ✅ **Single-use recovery codes (application logic)**: 8 concurrent redemptions produce exactly 1 password change, against a **mocked in-memory client**
+  - ✅ **Single-use recovery codes (database, authoritative)**: 8 **independent PostgreSQL 16 connections** racing one code produce exactly 1 winner, 1 password change, a spent code and revoked sessions — `tests/recovery-concurrency.pg.test.ts`, run in the CI `migrations` job
 - ✅ **Recovery codes are hash-only**: no test can find the plaintext in the database, the status payload or an audit entry
 - ✅ **Atomic rotation**: if storing the new code fails, the previous code is still redeemable — rotation is never left half-done
 - ✅ **Forged `X-Forwarded-For` cannot buy a fresh rate-limit bucket** (verified in unit tests and live against the dev server)
@@ -129,15 +133,30 @@ states and order-creation rules.
 
 Be clear about what a green test run does and does not prove in this environment.
 
-| What | Mocked? | Consequence |
-|---|---|---|
-| PostgreSQL / Prisma client | **Yes** — an in-memory stand-in | No test exercises real SQL, a real constraint, or a real `prisma migrate`. The recovery tests model `UPDATE ... WHERE used_at IS NULL` semantics faithfully (including transaction rollback), but **the migration itself has not been executed against a database here**. CI runs it against a Postgres service container. |
-| Supabase Storage | **Yes** | Upload/download/delete against real object storage is unverified. |
-| Google Fonts at build time | **Yes** (`NEXT_FONT_GOOGLE_MOCKED_RESPONSES`) | The real build needs egress to `fonts.googleapis.com`. |
-| Redis/Upstash rate limiting | No (in-memory in tests) | Shared-counter behaviour across instances is unverified. |
-| Email | **N/A** | The app sends no email at all. |
+  | What | Mocked? | Consequence |
+  |---|---|---|
+  | PostgreSQL / Prisma client (unit tests) | **Yes** — an in-memory stand-in | `tests/recovery.test.ts`, `tests/collection-token.test.ts` and friends run against JavaScript arrays. They prove **application logic only**: they exercise no real SQL, no real constraint, no row locking and no MVCC. A "concurrent" test there interleaves promises over an array — it cannot show that a database serialises anything. |
+  | PostgreSQL (integration test) | **No** — real PostgreSQL 16 | `tests/recovery-concurrency.pg.test.ts` opens independent `PrismaClient` instances against a real database. **This is the authoritative concurrency proof.** It skips without `DATABASE_URL`, so it needs CI (or a local Postgres) to actually run. |
+  | Migration replay / drift | **No** in CI; N/A locally | `npm run schema:check` is a **text** comparison (tables, columns, indexes, unique constraints) and has previously **passed while real drift existed**. The authoritative check is `prisma migrate diff --exit-code` against PostgreSQL 16 in the CI `migrations` job. Only that replays the SQL. |
+  | Supabase Storage | **Yes** | Upload/download/delete against real object storage is unverified. |
+  | Google Fonts at build time | **Yes** in this sandbox (`NEXT_FONT_GOOGLE_MOCKED_RESPONSES`) | The real build needs egress to `fonts.googleapis.com`. CI has normal network access, so the CI build is **not** mocked. |
+  | Redis/Upstash rate limiting | No (in-memory in tests) | Shared-counter behaviour across instances is unverified; only the failure modes (fail-closed by default, fail-open on explicit opt-in) are covered. |
+  | Email | **N/A** | The app sends no email at all. |
 
-The Prisma type surface used by `tsc` is generated by a gitignored scaffold
-(`.data/gen-prisma-scaffold.cjs`) because `prisma generate` cannot download its
-binaries in this sandbox. It is a **type** stand-in only; it is never committed and is
-not evidence that the real client works.
+  ### Do not call these "validated" on local evidence alone
+
+  - **`npm run schema:check` passing does NOT mean migrations are validated.** It parses
+    `schema.prisma` and the migration SQL as *text*. It cannot verify types, precision,
+    defaults, nullability, constraint names, foreign keys, enums or index methods. Only
+    `prisma migrate diff --exit-code` against a real database can.
+  - **A mocked "concurrent redemption" test does NOT prove database safety.** See the
+    PostgreSQL integration test above for what does.
+
+  The Prisma **type** surface used by `tsc` in this sandbox is generated by a gitignored
+  scaffold (`.data/gen-prisma-scaffold.cjs`) because `prisma generate` cannot download its
+  binaries here. It is never committed and is **not** evidence that the real client works —
+  and because it is more permissive than the generated client, `tsc` passing locally does
+  **not** guarantee `tsc` passes in CI. The `OrderNumberClient` type error (caught only by
+  the first real CI run) is exactly that failure mode: the scaffold accepted a
+  hand-written structural delegate type that real Prisma correctly rejects.
+  Always treat CI's typecheck as authoritative.
