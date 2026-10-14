@@ -143,6 +143,10 @@ Run `npm run config:check` with `NODE_ENV=production` before every deploy to cat
 resolved with `npm audit fix --force`. Result: **26 → 17**, with no major-version
 upgrade applied anywhere.
 
+> **Updated 2026-10-14 (second pass).** The Next.js/React upgrade described in
+> §12.2 has now landed. Current posture: **0 critical, 0 moderate, 0 low, 7 high —
+> and all 7 high entries are a single root advisory (`braces`)**. See §12.5.
+
 ### 12.1 Fixed (safe, backward-compatible)
 
 | Change | Findings cleared | Why it is safe |
@@ -156,10 +160,12 @@ upgrade applied anywhere.
 Verification after the change: `tsc --noEmit` clean, `next lint` clean,
 **148/148 tests pass**, and `next build` completes (see §12.3 for build caveats).
 
-### 12.2 Not fixed — requires a major upgrade (deliberate, not oversight)
+  ### 12.2 Not fixed — requires a major upgrade (deliberate, not oversight)
 
-- **`next` — CRITICAL, 23 advisories.** No patched 14.x exists (`next-14` dist-tag is
-  14.2.35; every advisory is fixed only in ≥15.5.24 or 16.x). Upgrading touches React 19,
+  *Items marked ✅ RESOLVED were fixed by the Next.js 15 / React 19 upgrade in §12.5.*
+
+  - ✅ RESOLVED — **`next` — CRITICAL, 23 advisories.** No patched 14.x exists (`next-14` dist-tag is
+    14.2.35; every advisory is fixed only in ≥15.5.24 or 16.x). Upgrading touches React 19,
   the App Router, and the build pipeline, so it needs its own branch and full regression
   run — it must not be folded into a security pass. **Most of the 23 are gated on
   configuration this app does not use**, verified by inspection:
@@ -175,18 +181,24 @@ Verification after the change: `tsc --noEmit` clean, `next lint` clean,
     (it only sets headers; it never issues a redirect).
   - **Still materially applicable:** the App Router / RSC denial-of-service and
     cache-poisoning advisories. These are the real reason to schedule the upgrade.
-- **`vitest` (critical), `tinypool` (critical), `vite` (high), `@vitest/mocker`,
-  `esbuild`, `vite-node`** — dev/test only, never shipped in `next build` output. The
-  `vitest` UI server is never started (`npm test` runs `vitest run`). Fixed only by
-  `vitest@5` (major).
-- **`tailwindcss` (high), `chokidar`, `micromatch`, `fast-glob`, `postcss-nested`,
-  `postcss-selector-parser`** — build-time CSS toolchain; processes the project's own
-  CSS and glob patterns, never user input. Fixed only by `tailwindcss@4`, which is a
-  different engine and config format.
-- **`braces` (high) has no fix at any version** — 3.0.3 is the latest published release
-  and it is still vulnerable. Reachable only through Tailwind's build-time globbing.
-- **`prisma` (high), `@prisma/config`, `deepmerge-ts`** — CLI/migrate-time only, not the
-  runtime client. Fixed only by `prisma@8` (major).
+  - ✅ RESOLVED — **`vitest` (critical), `tinypool` (critical), `vite` (high), `@vitest/mocker`,
+    `esbuild`, `vite-node`** — dev/test only, never shipped in `next build` output. The
+    `vitest` UI server is never started (`npm test` runs `vitest run`). Fixed by `vitest@4.1.11`.
+    Note `vitest@5` was **not** chosen: it requires Node `^22.12 || ^24 || >=26`, and the safe
+    fix for the `@vitest/mocker` advisory is `>=4.1.11`.
+  - ✅ MOSTLY RESOLVED — **`tailwindcss` (high), `chokidar`, `micromatch`, `fast-glob`,
+    `postcss-nested`, `postcss-selector-parser`** — build-time CSS toolchain. The
+    `postcss-selector-parser` root advisory was cleared by a narrow override to `^7.1.6`.
+    The rest remain only as propagation of the single `braces` root cause below.
+  - ⚠️ STILL OPEN — **`braces` (high) has no fix at any version** — 3.0.3 is the latest
+    published release and it is still vulnerable (advisory range `<=3.0.3`). Reachable
+    only through Tailwind's build-time globbing and `@next/eslint-plugin-next`. The only
+    remediation npm offers is `tailwindcss@4`, a different engine and config format.
+    **Accepted risk** — see §12.5 for the reachability analysis.
+  - ✅ RESOLVED — **`prisma` (high), `@prisma/config`, `deepmerge-ts`** — CLI/migrate-time
+    only, not the runtime client. Cleared by the narrow `deepmerge-ts → ^8.0.2` override;
+    `prisma`/`@prisma/config` were transitive-only entries with no advisory of their own,
+    and the `prisma@8` major was therefore **not** needed.
 
 ### 12.3 Build caveats (what is proven vs. not)
 
@@ -198,6 +210,65 @@ Verification after the change: `tsc --noEmit` clean, `next lint` clean,
      invoked as `npx next build`, bypassing `npm run build` (`prisma generate && next build`).
      Types came from a temporary scaffold inside `node_modules` that is **not committed** and
      must never be relied on. A real deploy must run `prisma generate` successfully.
+
+### 12.5 Next.js 15.5.27 / React 19.3.1 upgrade (landed 2026-10-14)
+
+**Why 15.5.27 and not 16.x.** Every `next` advisory is fixed in `>=15.5.24`, so 15.5.27
+clears all 23. Next 16 was rejected for this pass for three concrete reasons: it requires
+Node `>=20.9`, it makes Turbopack the default builder (it fails outright if a webpack
+config exists unless `--webpack` is passed), and it renames `middleware` → `proxy` — this
+repo has `src/middleware.ts`. 15.5.27 is the smallest change that clears the advisories.
+
+**Versions.**
+
+| Package | Before | After |
+|---|---|---|
+| `next` | 14.2.35 | **15.5.27** |
+| `react` / `react-dom` | 18.3.1 | **19.3.1** |
+| `eslint-config-next` | 14.2.15 | **15.5.27** |
+| `@types/react`, `@types/react-dom` | 18.x | **19.3.0** |
+| `next-themes` | 0.3.0 | **0.4.6** (0.3.0 does not peer-support React 19) |
+| `vitest` | 2.1.9 | **4.1.11** |
+| CI `setup-node` | 20 | **22** (vite 8 needs `^20.19 \|\| >=22.12`) |
+
+**Code changes required by the upgrade.** Next 15 makes the Request APIs async:
+
+- `params` is now a `Promise`. Updated **1 page** and **14 route handlers** to
+  `params: Promise<{...}>` + `await params`.
+- `cookies()` was **already awaited** in `src/server/auth.ts` — no change needed.
+- `headers()` and `draftMode()` are not used anywhere.
+- All 23 `searchParams` matches in `src/app` are `url.searchParams` inside route
+  handlers, **not** the page prop — unaffected.
+- `fetch` is no longer cached by default in Next 15. Every `fetch` here is dynamic
+  (`api-client`, `rate-limit`, `storage`), so the new default is the correct one.
+- `eslint-config-next` 15 enables `@next/next/no-html-link-for-pages`, which flagged
+  three homepage hash anchors in `site-footer.tsx`; converted to `next/link`.
+
+**Narrow overrides added** (both had published patched releases):
+
+- `deepmerge-ts → ^8.0.2` — GHSA-ggr8-5vv4-36mx, stack exhaustion on recursive graphs.
+- `postcss-selector-parser → ^7.1.6` — quadratic complexity in flat selector parsing.
+
+These are intentionally **narrow and targeted**, not broad overrides.
+
+**Accepted risk: `braces` (high, GHSA-vfj7-8cjw-p6xm, CWE-674, CVSS 7.5).**
+
+This is the **only remaining root advisory**. It is accepted, not suppressed, because:
+
+1. **No patched version exists.** The advisory range is `<=3.0.3` and 3.0.3 is the latest
+   published release. An override cannot fix it.
+2. **The only remediation is `tailwindcss@4`** — a different engine and a CSS-first config
+   format that would touch every template file. That is a UI migration, not a security
+   fix, and it directly risks the stability this pass was meant to protect.
+3. **It is build-time only.** `braces` is reached via Tailwind's content globbing and
+   `@next/eslint-plugin-next`. It is never shipped in `next build` output and never runs
+   against user input.
+4. **No attacker-controlled input reaches it.** Stack exhaustion requires a maliciously
+   nested glob pattern. The patterns come from `tailwind.config.js` (developer-authored,
+   committed to the repo) and Tailwind internals.
+
+It is recorded here so the `audit` job's failure is explainable at a glance, and so a
+future Tailwind 4 migration can close it deliberately.
 
 ## 13. Fixed defect: security headers were never applied
 
@@ -235,12 +306,20 @@ The `audit` job in `.github/workflows/ci.yml` runs `npm audit --audit-level=high
 **without `continue-on-error`**, so its exit status is honest: it fails while any
 high or critical finding remains.
 
-That means **this job is expected to fail until the Next.js upgrade lands** (§12.2).
+That means **this job is expected to fail while any high finding remains**. As of the
+2026-10-14 upgrade it fails on exactly one root advisory, `braces` (§12.5), which has
+no patched release and no fix short of a `tailwindcss@4` migration.
+
 This is deliberate. The previous arrangement — `npm audit` as the last step of the
 `verify` job with `continue-on-error: true` — had two defects: the step never ran at
 all once typecheck failed, and even when it did run, its findings could not fail the
 job. A green badge obtained by suppressing a critical finding is worth less than a
 red one that is accurate.
+
+The `verify` and `migrations` jobs **pass**; only `audit` is red, and for a single
+documented, accepted root cause. Reviewers should treat a red `audit` + green
+everything-else as the expected state, and should treat any *new* high/critical
+finding — other than `braces` — as a regression.
 
 The job always publishes a markdown summary of every critical/high finding and
 uploads the full `npm audit --json` as the `npm-audit-json` artifact, so the result
