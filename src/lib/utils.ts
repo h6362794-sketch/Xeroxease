@@ -35,6 +35,44 @@ export function formatDateShort(d: string | Date | null | undefined): string {
   }).format(date);
 }
 
+/**
+ * Locale- and time-zone-pinned date formatting, for anything rendered during SSR.
+ *
+ * `toLocaleDateString(undefined, …)` resolves BOTH the locale and the time zone
+ * from the runtime. A Server Component render (Node, typically UTC) and the
+ * browser hydration (the user's locale and local zone) can therefore produce
+ * different strings for the same instant — for a timestamp near midnight even
+ * the day differs. That is a hydration mismatch; React 19 responds to one by
+ * re-rendering the client tree rather than patching the text node.
+ *
+ * Pinning both makes the server and client agree byte for byte. en-IN /
+ * Asia/Kolkata match the rest of the app's formatting (see formatCurrencyINR).
+ */
+export function formatDateLong(d: string | Date | null | undefined): string {
+  if (!d) return "—";
+  const date = typeof d === "string" ? new Date(d) : d;
+  return new Intl.DateTimeFormat("en-IN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "Asia/Kolkata",
+  }).format(date);
+}
+
+/** Same contract as formatDateLong but includes the time. */
+export function formatDateTimeLong(d: string | Date | null | undefined): string {
+  if (!d) return "—";
+  const date = typeof d === "string" ? new Date(d) : d;
+  return new Intl.DateTimeFormat("en-IN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  }).format(date);
+}
+
 export function formatBytes(bytes: number): string {
   if (!bytes && bytes !== 0) return "—";
   const units = ["B", "KB", "MB", "GB"];

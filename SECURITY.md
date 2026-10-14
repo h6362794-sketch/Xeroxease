@@ -160,14 +160,14 @@ upgrade applied anywhere.
 Verification after the change: `tsc --noEmit` clean, `next lint` clean,
 **148/148 tests pass**, and `next build` completes (see §12.3 for build caveats).
 
-  ### 12.2 Not fixed — requires a major upgrade (deliberate, not oversight)
+### 12.2 Not fixed — requires a major upgrade (deliberate, not oversight)
 
-  *Items marked ✅ RESOLVED were fixed by the Next.js 15 / React 19 upgrade in §12.5.*
+*Items marked ✅ RESOLVED were fixed by the Next.js 15 / React 19 upgrade in §12.5.*
 
-  - ✅ RESOLVED — **`next` — CRITICAL, 23 advisories.** No patched 14.x exists (`next-14` dist-tag is
-    14.2.35; every advisory is fixed only in ≥15.5.24 or 16.x). Upgrading touches React 19,
-  the App Router, and the build pipeline, so it needs its own branch and full regression
-  run — it must not be folded into a security pass. **Most of the 23 are gated on
+- ✅ RESOLVED — **`next` — CRITICAL, 23 advisories.** No patched 14.x exists (`next-14`
+  dist-tag is 14.2.35; every advisory is fixed only in ≥15.5.24 or 16.x). Upgrading touches
+  React 19, the App Router, and the build pipeline, so it needs its own branch and full
+  regression run — it must not be folded into a security pass. **Most of the 23 are gated on
   configuration this app does not use**, verified by inspection:
   - Image Optimization API (4 advisories incl. the AVIF RCE): `next/image` is **not used
     anywhere** in `src/`, and `images.remotePatterns: []` blocks remote sources.
@@ -181,24 +181,24 @@ Verification after the change: `tsc --noEmit` clean, `next lint` clean,
     (it only sets headers; it never issues a redirect).
   - **Still materially applicable:** the App Router / RSC denial-of-service and
     cache-poisoning advisories. These are the real reason to schedule the upgrade.
-  - ✅ RESOLVED — **`vitest` (critical), `tinypool` (critical), `vite` (high), `@vitest/mocker`,
-    `esbuild`, `vite-node`** — dev/test only, never shipped in `next build` output. The
-    `vitest` UI server is never started (`npm test` runs `vitest run`). Fixed by `vitest@4.1.11`.
-    Note `vitest@5` was **not** chosen: it requires Node `^22.12 || ^24 || >=26`, and the safe
-    fix for the `@vitest/mocker` advisory is `>=4.1.11`.
-  - ✅ MOSTLY RESOLVED — **`tailwindcss` (high), `chokidar`, `micromatch`, `fast-glob`,
-    `postcss-nested`, `postcss-selector-parser`** — build-time CSS toolchain. The
-    `postcss-selector-parser` root advisory was cleared by a narrow override to `^7.1.6`.
-    The rest remain only as propagation of the single `braces` root cause below.
-  - ⚠️ STILL OPEN — **`braces` (high) has no fix at any version** — 3.0.3 is the latest
-    published release and it is still vulnerable (advisory range `<=3.0.3`). Reachable
-    only through Tailwind's build-time globbing and `@next/eslint-plugin-next`. The only
-    remediation npm offers is `tailwindcss@4`, a different engine and config format.
-    **Accepted risk** — see §12.5 for the reachability analysis.
-  - ✅ RESOLVED — **`prisma` (high), `@prisma/config`, `deepmerge-ts`** — CLI/migrate-time
-    only, not the runtime client. Cleared by the narrow `deepmerge-ts → ^8.0.2` override;
-    `prisma`/`@prisma/config` were transitive-only entries with no advisory of their own,
-    and the `prisma@8` major was therefore **not** needed.
+- ✅ RESOLVED — **`vitest` (critical), `tinypool` (critical), `vite` (high), `@vitest/mocker`,
+  `esbuild`, `vite-node`** — dev/test only, never shipped in `next build` output. The
+  `vitest` UI server is never started (`npm test` runs `vitest run`). Fixed by `vitest@4.1.11`.
+  Note `vitest@5` was **not** chosen: it requires Node `^22.12 || ^24 || >=26`, and the safe
+  fix for the `@vitest/mocker` advisory is `>=4.1.11`.
+- ✅ MOSTLY RESOLVED — **`tailwindcss` (high), `chokidar`, `micromatch`, `fast-glob`,
+  `postcss-nested`, `postcss-selector-parser`** — build-time CSS toolchain. The
+  `postcss-selector-parser` root advisory was cleared by a narrow override to `^7.1.6`.
+  The rest remain only as propagation of the single `braces` root cause below.
+- ⚠️ STILL OPEN — **`braces` (high) has no fix at any version** — 3.0.3 is the latest
+  published release and it is still vulnerable (advisory range `<=3.0.3`). Reachable
+  only through Tailwind's build-time globbing and `@next/eslint-plugin-next`. The only
+  remediation npm offers is `tailwindcss@4`, a different engine and config format.
+  **Accepted risk** — see §12.5 for the reachability analysis.
+- ✅ RESOLVED — **`prisma` (high), `@prisma/config`, `deepmerge-ts`** — CLI/migrate-time
+  only, not the runtime client. Cleared by the narrow `deepmerge-ts → ^8.0.2` override;
+  `prisma`/`@prisma/config` were transitive-only entries with no advisory of their own,
+  and the `prisma@8` major was therefore **not** needed.
 
 ### 12.3 Build caveats (what is proven vs. not)
 
@@ -256,16 +256,40 @@ These are intentionally **narrow and targeted**, not broad overrides.
 This is the **only remaining root advisory**. It is accepted, not suppressed, because:
 
 1. **No patched version exists.** The advisory range is `<=3.0.3` and 3.0.3 is the latest
-   published release. An override cannot fix it.
-2. **The only remediation is `tailwindcss@4`** — a different engine and a CSS-first config
-   format that would touch every template file. That is a UI migration, not a security
-   fix, and it directly risks the stability this pass was meant to protect.
-3. **It is build-time only.** `braces` is reached via Tailwind's content globbing and
-   `@next/eslint-plugin-next`. It is never shipped in `next build` output and never runs
-   against user input.
-4. **No attacker-controlled input reaches it.** Stack exhaustion requires a maliciously
-   nested glob pattern. The patterns come from `tailwind.config.js` (developer-authored,
-   committed to the repo) and Tailwind internals.
+   published release. An override cannot fix it. Upstream is dormant — `braces` was last
+   published 2024-09-18, so waiting for a fix is not a plan.
+2. **The only remediation npm offers is `tailwindcss@4`** — a different engine and a
+   CSS-first config format that would touch every template file. That is a UI migration,
+   not a security fix, and it directly risks the stability this pass was meant to protect.
+
+**Exposure — verified, not assumed.** "It is only a devDependency" is not by itself an
+argument, so the claim was checked against the actual graph and the actual build output:
+
+- **No production dependency reaches it.** Walking the lockfile from every entry in
+  `dependencies` (not `devDependencies`), there is no path to `braces`, `micromatch`,
+  `fast-glob` or `chokidar`. All four are reachable only via `tailwindcss`,
+  `eslint-config-next` and `prisma` — all devDependencies.
+- **No application code imports it.** `src/` contains no import of `braces`, `micromatch`
+  or `fast-glob`.
+- **It is absent from the production bundle.** After a successful webpack compile, the
+  453 files under `.next/` contain **zero** occurrences of `braces`, `micromatch`,
+  `fast-glob`, `chokidar`, or of braces internals (`expand-range`, `fill-range`,
+  `toRegexRange`, `isBrace`). The vulnerable code is not shipped.
+- **No attacker-controlled input reaches it.** Stack exhaustion (CWE-674) requires a
+  maliciously nested glob pattern. The patterns come from `tailwind.config.js`
+  (developer-authored, committed) and Tailwind internals.
+
+**Residual uncertainty.** The bundle inspection above was performed on a build compiled in
+a sandbox that could not reach `fonts.googleapis.com` (Google Fonts was mocked) and could
+not run `prisma generate` (so type-checking failed). Bundling — which is what determines
+whether `braces` is included — completed successfully, so the inclusion result is sound,
+but that build did not pass as a whole. The authoritative build is CI's, which passes with
+real fonts and a generated client. The exposure argument rests on the dependency-graph and
+bundle analysis above, not on a claim that a dev dependency is automatically harmless.
+
+**Practical risk: low.** A successful attack needs (a) a build-time or lint-time context,
+(b) an attacker-supplied deeply nested glob, and (c) code that passes that glob to braces.
+None of the three holds.
 
 It is recorded here so the `audit` job's failure is explainable at a glance, and so a
 future Tailwind 4 migration can close it deliberately.

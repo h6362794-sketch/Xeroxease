@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Card, EmptyState, Input, Label, Modal, Select, Skeleton, Badge } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api-client";
-import { formatDateShort } from "@/lib/utils";
+import { formatDateShort, formatDateTimeLong } from "@/lib/utils";
 import { Search, UserPlus, Ban, CheckCircle2, KeyRound } from "lucide-react";
 
 interface UserRow {
@@ -281,7 +281,7 @@ function IssueRecoveryCodeModal({ user, onClose }: { user: UserRow; onClose: () 
           <p className="text-sm text-zinc-400">
             Give this code to <span className="text-white font-semibold">{user.name}</span> ({user.regNo ?? user.email}).
             It works once and expires{" "}
-            {expiresAt ? new Date(expiresAt).toLocaleString() : "in 24 hours"}.
+            {expiresAt ? formatDateTimeLong(expiresAt) : "in 24 hours"}.
           </p>
           <p className="rounded-xl border border-zinc-700 bg-black/40 px-4 py-4 text-center font-mono text-base tracking-widest text-white break-all select-all">
             {code}
