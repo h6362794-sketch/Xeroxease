@@ -40,6 +40,19 @@ const MESSAGES: Record<CollectionFailureCode, string> = {
   NOT_READY: "Order is not ready for collection.",
 };
 
+/**
+ * Declared explicitly rather than left to inference.
+ *
+ * TypeScript normalises an *inferred* union of object literals by adding keys that
+ * appear in some members as `key?: undefined` on the others. After
+ * `if ("orderId" in outcome)`, that leaves `outcome.userId` as
+ * `string | undefined` even though the success branch always sets it, which is a
+ * type error at the call sites below. Naming the union keeps `in` narrowing exact.
+ */
+type ConsumeOutcome =
+  | { code: CollectionFailureCode }
+  | { orderId: string; userId: string; orderNumber: string };
+
 export function collectionFailure(code: CollectionFailureCode): CollectionResult {
   return { ok: false, reason: MESSAGES[code], code };
 }
@@ -79,7 +92,7 @@ export async function consumeCollectionToken(
 ): Promise<CollectionResult> {
   const h = hashCollectionToken(token);
 
-  const outcome = await prisma.$transaction(async (tx) => {
+  const outcome = await prisma.$transaction<ConsumeOutcome>(async (tx) => {
     const candidates = await tx.order.findMany({
       where: { collectionTokenHash: h },
       select: { id: true, status: true, collectionTokenUsedAt: true, userId: true, orderNumber: true },

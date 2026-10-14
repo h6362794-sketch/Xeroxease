@@ -136,3 +136,95 @@ These are **not** fixed by the code and must be handled by whoever deploys the a
 9. **CSRF** relies on `SameSite=Lax` cookies plus JSON-only state-changing endpoints. If a future endpoint accepts cross-origin form posts or `text/plain` bodies, add an explicit CSRF token.
 
 Run `npm run config:check` with `NODE_ENV=production` before every deploy to catch missing or obviously invalid configuration.
+
+## 12. Dependency vulnerability assessment (audited 2026-10-14)
+
+`npm audit` reported **26** findings. Each was inspected individually rather than
+resolved with `npm audit fix --force`. Result: **26 → 17**, with no major-version
+upgrade applied anywhere.
+
+### 12.1 Fixed (safe, backward-compatible)
+
+| Change | Findings cleared | Why it is safe |
+|---|---|---|
+| Removed `@auth/core` | 2 **critical** | Declared in the initial commit but **never imported anywhere**. Authentication is entirely custom (`src/server/auth.ts`, node crypto + argon2/bcryptjs). Removing dead code removes the attack surface. |
+| Removed `mammoth` | 1 moderate + `argparse` + `sprintf-js` | Also **never imported**. `src/server/doc-analysis.ts` counts `.docx` pages with `zlib.inflateRawSync`; `.pdf` uses `pdf-lib`. |
+| `overrides: source-map-js ^1.2.2` | 1 high (GHSA event-loop DoS) | Patch bump within 1.2.x. `postcss` depends on `^1.2.1`, so 1.2.2 satisfies it. |
+| `overrides: postcss $postcss` (→ 8.5.30) | 2 high + 2 moderate | `next@14.2.35` pins `postcss@8.4.31`, which is vulnerable. 8.5.x is already the project's own devDependency, so this only dedupes Next's stale nested copy onto the version already in use. |
+| `overrides: @next/eslint-plugin-next → glob ^10.5.0` | 1 high (glob CLI command injection) | **Deliberately scoped** to that one package. A global `glob` override would have forced `rimraf`'s `glob@7` onto 10.x — a breaking API change. |
+
+Verification after the change: `tsc --noEmit` clean, `next lint` clean,
+**148/148 tests pass**, and `next build` completes (see §12.3 for build caveats).
+
+### 12.2 Not fixed — requires a major upgrade (deliberate, not oversight)
+
+- **`next` — CRITICAL, 23 advisories.** No patched 14.x exists (`next-14` dist-tag is
+  14.2.35; every advisory is fixed only in ≥15.5.24 or 16.x). Upgrading touches React 19,
+  the App Router, and the build pipeline, so it needs its own branch and full regression
+  run — it must not be folded into a security pass. **Most of the 23 are gated on
+  configuration this app does not use**, verified by inspection:
+  - Image Optimization API (4 advisories incl. the AVIF RCE): `next/image` is **not used
+    anywhere** in `src/`, and `images.remotePatterns: []` blocks remote sources.
+  - Windows-host RCE: deployment target is Vercel (Linux).
+  - Rewrites/redirects (2): none configured in `next.config.mjs`.
+  - Server Actions (4): no `"use server"` directive exists in the codebase.
+  - Custom-server WebSocket SSRF / i18n middleware bypass / CSP-nonce XSS /
+    `beforeInteractive` XSS: not applicable (no custom server, no i18n, no nonce, no
+    `beforeInteractive`).
+  - The middleware advisories no longer apply now that `src/middleware.ts` is loaded
+    (it only sets headers; it never issues a redirect).
+  - **Still materially applicable:** the App Router / RSC denial-of-service and
+    cache-poisoning advisories. These are the real reason to schedule the upgrade.
+- **`vitest` (critical), `tinypool` (critical), `vite` (high), `@vitest/mocker`,
+  `esbuild`, `vite-node`** — dev/test only, never shipped in `next build` output. The
+  `vitest` UI server is never started (`npm test` runs `vitest run`). Fixed only by
+  `vitest@5` (major).
+- **`tailwindcss` (high), `chokidar`, `micromatch`, `fast-glob`, `postcss-nested`,
+  `postcss-selector-parser`** — build-time CSS toolchain; processes the project's own
+  CSS and glob patterns, never user input. Fixed only by `tailwindcss@4`, which is a
+  different engine and config format.
+- **`braces` (high) has no fix at any version** — 3.0.3 is the latest published release
+  and it is still vulnerable. Reachable only through Tailwind's build-time globbing.
+- **`prisma` (high), `@prisma/config`, `deepmerge-ts`** — CLI/migrate-time only, not the
+  runtime client. Fixed only by `prisma@8` (major).
+
+### 12.3 Build caveats (what is proven vs. not)
+
+- `next build` **succeeded** in this environment. Two substitutions were required and are
+  **not** evidence that the real integrations work:
+  1. **Google Fonts was mocked** (`NEXT_FONT_GOOGLE_MOCKED_RESPONSES`) because
+     `fonts.googleapis.com` is unreachable here. A real CI runner must allow egress.
+  2. **`prisma generate` never ran** — `binaries.prisma.sh` is blocked here. The build was
+     invoked as `npx next build`, bypassing `npm run build` (`prisma generate && next build`).
+     Types came from a temporary scaffold inside `node_modules` that is **not committed** and
+     must never be relied on. A real deploy must run `prisma generate` successfully.
+
+## 13. Fixed defect: security headers were never applied
+
+**Found and fixed 2026-10-14.** `middleware.ts` was committed at the *repository root*,
+but the App Router directory is `src/app`. Next.js only loads a middleware that is a
+**sibling of the `app/` directory**, so the file was silently ignored — no error, no
+warning, no build failure.
+
+**Impact:** every response was missing `Content-Security-Policy`, `Strict-Transport-Security`
+(HSTS), `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`
+and `X-DNS-Prefetch-Control`. Confirmed empirically against a running production server:
+
+```
+before: HTTP/1.1 200 OK         -> none of the security headers present
+after : content-security-policy: default-src 'self'; ... frame-ancestors 'none'; ...
+        strict-transport-security: max-age=63072000; includeSubDomains; preload
+        x-frame-options: DENY
+        x-content-type-options: nosniff
+        referrer-policy: strict-origin-when-cross-origin
+        permissions-policy: camera=(), microphone=(), geolocation=(), payment=()
+        x-dns-prefetch-control: off
+```
+
+**Fix:** `git mv middleware.ts src/middleware.ts`. The build output now includes
+`ƒ Middleware 26.8 kB` (previously absent), and the header set was verified on both
+`/login` and an API route.
+
+**Regression guard:** `tests/security-headers.test.ts` asserts the file location and the
+header values, including that HSTS appears only in production and that `ALLOW_DEV_FRAME_EMBED`
+cannot weaken production. Reintroducing the old file location fails 6 of its 7 tests.

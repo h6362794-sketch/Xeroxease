@@ -25,7 +25,6 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@auth/core": "^0.37.0",
     "@hookform/resolvers": "^3.9.0",
     "@prisma/client": "^6.5.0",
     "@tanstack/react-query": "^5.59.0",
@@ -37,7 +36,6 @@
     "framer-motion": "^11.11.0",
     "gsap": "^3.12.5",
     "lucide-react": "^0.453.0",
-    "mammoth": "^1.8.0",
     "next": "^14.2.15",
     "next-themes": "^0.3.0",
     "pdf-lib": "^1.17.1",
@@ -54,11 +52,18 @@
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.15",
-    "postcss": "^8.4.47",
+    "postcss": "^8.5.28",
     "prisma": "^6.5.0",
     "tailwindcss": "^3.4.13",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
     "vitest": "^2.1.2"
+  },
+  "overrides": {
+    "source-map-js": "^1.2.2",
+    "postcss": "$postcss",
+    "@next/eslint-plugin-next": {
+      "glob": "^10.5.0"
+    }
   }
 }
