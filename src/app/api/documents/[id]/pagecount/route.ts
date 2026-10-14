@@ -9,14 +9,14 @@ import { confirmFilePageCount } from "@/server/documents";
  * inconclusive. Without this, NEEDS_REVIEW documents (legacy .doc, metadata-less
  * .docx) could never be ordered without administrator intervention.
  */
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const user = await requireUser();
 
     const limited = await enforceRateLimit(req, RATE_LIMITS.analyze, "doc-pagecount");
     if (limited) return limited;
 
-    const { id } = params;
+    const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) return apiError("Invalid document id.", 400);
 
     const data = await parseBody(req, pageCountConfirmSchema);

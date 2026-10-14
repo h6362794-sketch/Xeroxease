@@ -3,10 +3,10 @@ import { requireRole } from "@/server/auth";
 import { apiError, json, withErrorHandling } from "@/server/api-utils";
 import { audit } from "@/server/audit";
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const actor = await requireRole("SUPER_ADMIN");
-    const { id } = params;
+    const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) return apiError("Invalid user id.", 400);
     if (id === actor.id) return apiError("You cannot disable your own account.", 400);
 

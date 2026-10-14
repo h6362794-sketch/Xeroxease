@@ -25,10 +25,10 @@ const bodySchema = z.object({
  * administrator hands to the verified user, who then sets their own password at
  * /forgot-password.
  */
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const actor = await requireRole("SUPER_ADMIN");
-    const { id } = params;
+    const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) return apiError("Invalid user id.", 400);
 
     const limited = await enforceRateLimit(req, RATE_LIMITS.adminRecoveryCode, "admin-recovery-code", actor.id);

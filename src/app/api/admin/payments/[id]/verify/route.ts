@@ -7,10 +7,10 @@ import { NOTIFY } from "@/server/notifications";
 
 const schema = z.object({ note: z.string().trim().max(500).optional().or(z.literal("")) });
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const user = await requireRole("ADMIN", "SUPER_ADMIN");
-    const { id } = params;
+    const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) return apiError("Invalid order id.", 400);
     const data = await parseBody(req, schema);
 
