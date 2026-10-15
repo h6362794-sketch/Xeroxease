@@ -174,6 +174,17 @@ export async function requireRole(...roles: Role[]): Promise<SessionUser> {
   return user;
 }
 
-export function isAdminRole(role: Role): boolean {
+/**
+ * Role as it reaches the role helpers.
+ *
+ * Prisma's generated `Role` union is the normal input, but several modules take an
+ * *injection* rather than a call — e.g. `direct-upload/download.ts` receives
+ * `isAdminRole` as a predicate over the role it read from a row, and `tests/` hand it
+ * plain strings. Widening the parameter to `string` keeps those call sites honest
+ * without weakening the comparison, which is a closed set of two literals either way.
+ */
+export type RoleLike = Role | string;
+
+export function isAdminRole(role: RoleLike): boolean {
   return role === "ADMIN" || role === "SUPER_ADMIN";
 }
