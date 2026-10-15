@@ -108,6 +108,69 @@ if (production) {
     );
   }
 
+  if (backend === "supabase") {
+    add(
+      "NEXT_PUBLIC_SUPABASE_URL is https",
+      "required",
+      /^https:\/\//i.test(value("NEXT_PUBLIC_SUPABASE_URL")),
+      "The browser PUTs document bytes straight to this host; a plain-http storage origin " +
+        "downgrades the whole upload path to cleartext."
+    );
+    add(
+      "NEXT_PUBLIC_SUPABASE_URL has no /storage path",
+      "required",
+      !/\/storage(\/|$)/.test(value("NEXT_PUBLIC_SUPABASE_URL")),
+      'Use the bare project URL (https://<ref>.supabase.co). The app appends /storage/v1 itself, ' +
+        "so a URL that already contains it produces doubled paths and 404s."
+    );
+    const directEnabled = (value("DIRECT_UPLOADS_ENABLED") || "true").toLowerCase() !== "false";
+    add(
+      "direct uploads available (100 MB documents)",
+      "required",
+      directEnabled,
+      "DIRECT_UPLOADS_ENABLED=false on a function host (Vercel) means a 100 MB upload has no " +
+        "working path — the proxy route is bounded by the platform's request-body limit. " +
+        "Only disable it on a host with no body cap."
+    );
+  }
+  if (backend === "local") {
+    add(
+      "local storage cannot do direct uploads",
+      // Required: with direct uploads unavailable, a 100 MB document has no working
+      // path at all on a platform with a request-body cap, so this must not pass
+      // quietly just because the app boots.
+      "required",
+      false,
+      'STORAGE_BACKEND=local has no browser-usable storage credential, so /api/uploads/intent returns 501 ' +
+        "and uploads fall back to the proxy route (bounded by the platform's request-body limit). " +
+        "Acceptable for development only; use supabase for 100 MB documents."
+    );
+  }
+  const intentTtl = Number(value("UPLOAD_INTENT_TTL_SECONDS") || "600");
+  add(
+    "UPLOAD_INTENT_TTL_SECONDS in 60..3600",
+    "required",
+    Number.isFinite(intentTtl) && intentTtl >= 60 && intentTtl <= 3600,
+    "Bounds how long an abandoned upload may sit in the bucket. 600 s suits a 100 MB transfer."
+  );
+  const signedTtl = Number(value("SIGNED_DOWNLOAD_URL_TTL_SECONDS") || "60");
+  add(
+    "SIGNED_DOWNLOAD_URL_TTL_SECONDS in 10..900",
+    "required",
+    Number.isFinite(signedTtl) && signedTtl >= 10 && signedTtl <= 900,
+    "Signed download URLs embed a bearer token in the URL. Long lifetimes leak through " +
+      "browser history, proxies and referrer headers."
+  );
+  const providerCap = Number(value("STORAGE_PROVIDER_MAX_FILE_BYTES") || "0");
+  add(
+    "STORAGE_PROVIDER_MAX_FILE_BYTES is 0 or >= 1 MB",
+    "required",
+    Number.isFinite(providerCap) && (providerCap === 0 || providerCap >= 1048576),
+    "0 (or unset) means the application limit binds. Set it to the provider's own per-file " +
+      "cap (Supabase Free: 52428800 = 50 MB) so oversized files are refused before the " +
+      "browser wastes the transfer."
+  );
+
   add(
     "NEXT_PUBLIC_APP_URL set to https",
     "required",
@@ -115,6 +178,14 @@ if (production) {
     "Used for page metadata, canonical URLs and the sitemap. Recovery is email-free, " +
       "so no reset link is built from it, but a non-https value still produces wrong " +
       "canonical URLs behind TLS."
+  );
+
+  add(
+    "TRUSTED_PROXY_COUNT set explicitly",
+    "recommended",
+    value("TRUSTED_PROXY_COUNT") !== "",
+    "Defaults to 1. Set 0 when the app is directly exposed, and re-check after adding or " +
+      "removing a CDN — the wrong value makes client IPs forgeable or buckets every user together."
   );
 
   const rateStore = value("RATE_LIMIT_STORAGE") || "memory";

@@ -57,12 +57,67 @@ Security is a first-class requirement, prioritized above visual effects and conv
 
 ## 4. File security model
 
-- Uploaded documents are written to **private storage**. `STORAGE_BACKEND=local` (default, development only) writes to `.data/uploads`, outside any public web root; `STORAGE_BACKEND=supabase` writes to a single **private** bucket named by `STORAGE_BUCKET` (default `documents`).
-- In production, local storage is **refused** unless `ALLOW_EPHEMERAL_LOCAL_STORAGE=true`. Ephemeral/serverless filesystems lose files between invocations, which would leave orders referencing documents that no longer exist.
-- Storage keys are `sanitizeKeySegment(ownerId)/<timestamp>-<random>-<sanitised name>`: no user-controlled path component, no `..`, no absolute paths, no hidden-file prefixes.
-- Downloads stream through `/api/files/:id/download` after ownership/role verification; every access is audited. There are **no permanent public URLs**.
+Two upload transports exist, and the security properties differ, so each is stated separately.
+
+### 4.1 Proxy upload (development, `STORAGE_BACKEND=local`)
+
+`POST /api/uploads` accepts the whole file (bounded stream, `parseBoundedFormData`),
+validates extension + declared MIME + magic bytes + size **on the actual bytes**, writes
+it, and only then creates the row. Bounded by the platform's request-body limit (4.5 MB
+on Vercel), which is why it is not the production path for documents.
+
+### 4.2 Direct upload (production, `STORAGE_BACKEND=supabase`)
+
+Because a function host cannot carry a 100 MB body, the browser writes to storage itself
+under an authorization the server mints. The security property that replaces "we saw the
+bytes" is "**we re-read the object afterwards and it matches what we authorized**":
+
+- Uploaded documents live in **private storage** only. `local` writes to `.data/uploads`
+  outside any web root; `supabase` writes to a single **private** bucket named by
+  `STORAGE_BUCKET` (default `documents`). No public bucket, no public object URL, no
+  permanent link is ever produced.
+- In production, `local` is **refused at write time** (`assertDurableBackend`) unless
+  `ALLOW_EPHEMERAL_LOCAL_STORAGE=true`; `config:check` fails the deploy outright. The
+  direct protocol is *unsupported* (not downgraded) on `local`: `/api/uploads/intent`
+  returns 501 with the reason.
+- Storage keys are `sanitizeKeySegment(ownerId)/<timestamp>-<random>-<sanitised name>`:
+  no user-controlled path component, no `..`, no absolute paths, no hidden prefixes. The
+  key is generated **before** the row exists and the client is never asked to supply one,
+  so "guess a key" and "supply your own key" are not inputs at all.
+- The upload authorization is bound to exactly **one path**, is time-limited
+  (`UPLOAD_INTENT_TTL_SECONDS`, default 600 s), and the provider rejects an existing
+  object at that path (no silent overwrite, no `x-upsert`).
+- Completion requires an HMAC token bound to `(document row, owner, key, claimed size,
+  expiry, nonce)`; the row keeps only `SHA-256(token)` under a **unique** constraint, so a
+  token cannot be replayed, swapped for another document, or reused after a new intent.
+- Verification reads **measured size** (object metadata) and the **first 16 bytes**
+  (signature) from storage. Client claims are never trusted; a mismatch deletes the object
+  and fails the row. `status` only reaches `COMPLETED` after that check, and
+  `createOrder` selects `status = "COMPLETED"` — an unverified document cannot be ordered,
+  priced, printed or downloaded (even by an admin).
+- Abandoned/expired intents are reaped by an explicit SUPER_ADMIN call
+  (`POST /api/admin/uploads/sweep`); the app has **no scheduler**, so un-reaped PENDING
+  rows and their objects persist until someone calls it.
+- `maxSize`/MIME are **not** enforceable inside a Supabase signed upload URL, so the
+  bucket's own file-size/MIME settings are defence in depth, not the primary control.
+
+### 4.3 Downloads
+
+`GET /api/files/:id/download` authorizes from the **database row** (owner or ADMIN/
+SUPER_ADMIN), returns an identical 404 for "not yours" and "does not exist", refuses
+non-`COMPLETED` rows, then either redirects (307) to a short-lived signed URL
+(`supabase`) or streams (`local`). Redirect responses are `Cache-Control: private,
+no-store, must-revalidate` + `no-referrer` + `noindex`, and carry **no `Vary`** — a cached
+redirect would cache the credential. Rate limited per user. There are **no permanent
+public URLs**; a signed URL is a 60-second bearer token, so it must never be logged,
+stored or embedded (see `UPLOADS.md` §3).
+
+### 4.4 Still not implemented
+
 - Filenames are sanitized for display; storage names are server-generated.
-- Malware scanning hook: set `ENABLE_MALWARE_SCAN=true` and wire a scanning vendor into the upload pipeline (see `src/app/api/uploads/route.ts`) when infrastructure permits.
+- **No malware scanning.** `ENABLE_MALWARE_SCAN` is a flag with no code behind it; wiring a
+  vendor into the upload pipeline is an open item. No scan is claimed anywhere, and a
+  passing signature check is not a safety claim about file contents.
 
 ## 5. AI/document-processing security
 
@@ -85,8 +140,9 @@ Security is a first-class requirement, prioritized above visual effects and conv
 ## 7. Secrets management
 
 - All secrets via environment variables (`.env.local`, gitignored; `.env.example` documents placeholders).
-- `SESSION_SECRET` signs collection tokens; rotate via env change (invalidates outstanding collection codes — acceptable, they're re-issued per order).
-- The Supabase **service-role key must never** be exposed to the client or committed. Only the anon key may reach the browser, and the current architecture doesn't require it there.
+- `SESSION_SECRET` signs **collection tokens and direct-upload intent tokens**. Rotating it invalidates outstanding collection codes (acceptable, they're re-issued per order) *and* every in-flight upload intent, whose browser will then fail completion — so rotate when no uploads are in progress, or expect users to retry.
+- The one-time completion credential returned by `/api/uploads/intent` is a bearer token. It is never written to the database (only its SHA-256 digest), never placed in a URL, and never included in audit metadata, error bodies or logs.
+- The Supabase **service-role key must never** be exposed to the client or committed. It is used server-side only, including to mint the browser's signed upload/download URLs — the browser receives the *resulting short-lived URL*, never the key. No `NEXT_PUBLIC_*` value reaches a client bundle in this app; the anon key is unused (see `.env.example`) and the browser is only ever given the storage URL from the intent response.
 
 ## 8. Logging & monitoring
 
@@ -108,34 +164,45 @@ Security is a first-class requirement, prioritized above visual effects and conv
 - Storage bucket sync for uploaded documents; retention per configured policy.
 - Reconciliation: `payment_events` against bank/UPI statements.
 
-## 11. Remaining risks / operator responsibilities
+## 11. Residual risks and operator responsibilities
 
-Honest list — these remain after deploying this codebase:
+Honest list — these remain after deploying this codebase. **11.1 is the operative
+checklist** (things the code cannot enforce); 11.2 is what is simply not built yet.
 
-- **Malware scanning is not active by default.** Enable `ENABLE_MALWARE_SCAN` with a scanning vendor for production.
-- **Rate limiting is in-memory** — fine for a single instance; use Redis (e.g., Upstash) for multi-instance deployments.
-- **2FA/OTP flags exist but are not implemented** (`ENABLE_2FA`, `ENABLE_OTP_VERIFICATION`) — do not enable the flags expecting behavior.
-- **Payments remain manually verified** — the desk must actually check bank/UPI statements; the app cannot detect forged references.
-- **HTTPS/TLS** termination is your deployment platform's responsibility; HSTS is set in production but only matters behind TLS.
-- **Dependency auditing**: run `npm audit` regularly and keep dependencies patched.
-- **Database access**: the app uses a privileged Postgres role; apply least-privilege per your Supabase setup and rely on application-layer authorization (row-level security is not used because Prisma connects as a trusted server-side principal).
-
-
-## 9. Residual risks and operator responsibilities
-
-These are **not** fixed by the code and must be handled by whoever deploys the app:
+### 11.1 Not fixable by application code
 
 1. **`TRUSTED_PROXY_COUNT` must match your deployment.** Client IP is read `TRUSTED_PROXY_COUNT` hops from the right of `X-Forwarded-For`, which is only correct if exactly that many trusted proxies sit in front of the app (Vercel: 1). Getting it wrong does more than mis-attribute IPs: too high a value reads a client-forged entry and lets an attacker pick their own rate-limit bucket; too low a value buckets every client behind the proxy together. Set it deliberately and re-check after any infrastructure change.
 2. **Recovery codes are bearer credentials.** Anyone holding a user's code *and* their identifier can take over the account. The code is single-use and never emailed, but it is only as safe as wherever the user stored it. Encourage a password manager, and treat a report of a lost code as an incident.
 3. **The admin-assisted fallback depends on human identity verification.** The code cannot enforce it — an administrator who issues a code without checking ID defeats the control. Every issuance is audited with a mandatory reason; review `RECOVERY_CODE_ADMIN_ISSUED` entries.
-4. **Rate limiting is per-IP.** Users behind one NAT share a bucket; a determined distributed attack is not stopped by these limits alone. Use the shared Redis store and consider a WAF.
-5. **`next/font/google` requires build-time network access.** The build fetches Inter from Google Fonts. In an air-gapped or egress-restricted CI runner the build fails; either allow egress to `fonts.googleapis.com` or self-host the font.
-6. **No malware scanning.** `ENABLE_MALWARE_SCAN` exists as a hook but no scanner is wired in. Uploaded documents are parsed server-side (pdf-lib / zlib inflate), so a scanning vendor is recommended before processing untrusted documents at scale.
-7. **Reverse-proxy body limits.** The app rejects oversized uploads, but the platform and proxy must be configured to match (nginx `client_max_body_size 110M`; note that some serverless platforms cap request bodies far below 100 MB).
-8. **Backups and retention** are the operator's responsibility. Never run `prisma migrate reset` or `prisma db push --force-reset` against production data.
-9. **CSRF** relies on `SameSite=Lax` cookies plus JSON-only state-changing endpoints. If a future endpoint accepts cross-origin form posts or `text/plain` bodies, add an explicit CSRF token.
+4. **Rate limiting is per-IP (and per-user where an identity exists).** Users behind one NAT share a bucket; a determined distributed attack is not stopped by these limits alone. Use the shared Redis store and consider a WAF.
+5. **`next/font/google` requires build-time network access.** The build fetches Inter from Google Fonts. In an air-gapped or egress-restricted CI runner the build fails; either allow egress to `fonts.googleapis.com` or self-host the font. `prisma generate` needs `binaries.prisma.sh` at build/install time for the same reason.
+6. **Reverse-proxy and function body limits.** The app rejects oversized uploads, but the platform must be configured to match. On a function host the ceiling is both ways — Vercel allows 4.5 MB per **request body and per response body** — which is why document bytes now travel browser ↔ storage and `GET /api/files/:id/download` answers with a 307 to a short-lived signed URL instead of streaming through the function. Self-hosted nginx needs `client_max_body_size` ≥ the limit you advertise. A deployment that re-routes downloads back through the app re-introduces the exact failure this exists to avoid.
+7. **Bucket-level limits are defence in depth, not the control.** A Supabase signed upload URL cannot carry `maxSize`/MIME restrictions, so the bucket's global file-size limit (Supabase Free: 50 MB) is what actually caps the *provider* side. Set it deliberately and mirror it in `STORAGE_PROVIDER_MAX_FILE_BYTES`; leaving them inconsistent only produces confusing 413s, it does not weaken authorization (the object is measured and signature-checked after every upload).
+8. **No scheduler exists, by design.** Abandoned `PENDING` upload rows and their objects are reaped only when `POST /api/admin/uploads/sweep` is called. Point the platform's cron at it (or remember it) or the bucket accumulates orphans; the same applies to retention purging and session sweeps.
+9. **HTTPS/TLS** termination is your deployment platform's responsibility; HSTS is set in production but only matters behind TLS. There is no in-app force-HTTPS redirect.
+10. **Backups and retention** are the operator's responsibility. Never run `prisma migrate reset` or `prisma db push --force-reset` against production data.
+11. **CSRF** relies on `SameSite=Lax` cookies plus JSON-only state-changing endpoints. If a future endpoint accepts cross-origin form posts or `text/plain` bodies, add an explicit CSRF token. Note that the direct-upload PUT is *deliberately* cross-origin and is authorized by the provider's signed URL, not by the session cookie.
+12. **Dependency auditing**: run `npm audit` regularly and keep dependencies patched.
 
-Run `npm run config:check` with `NODE_ENV=production` before every deploy to catch missing or obviously invalid configuration.
+### 11.2 Not implemented (do not assume otherwise)
+
+- **Malware scanning is not active.** `ENABLE_MALWARE_SCAN` is a flag with no code behind
+  it. Documents are parsed server-side (pdf-lib / zlib inflate), so wire a scanning vendor
+  into the pipeline before processing untrusted documents at scale. A passing signature
+  check is not a safety claim about file contents.
+- **2FA/OTP are not implemented** (`ENABLE_2FA`, `ENABLE_OTP_VERIFICATION`) — enabling the
+  flags changes nothing.
+- **Payments are manually verified** — the desk must actually check bank/UPI statements;
+  the app cannot detect forged references. If a real provider is added, plug it into the
+  verify step; the order model needs no redesign.
+- **Resumable/chunked uploads are not implemented** (`UPLOADS.md` §8 explains why TUS was
+  rejected for this deployment).
+- **Row-level security is not used.** Prisma connects as a trusted server-side principal;
+  authorization is enforced in the application layer on every route. If a second consumer
+  ever reads this database directly, that assumption must be revisited.
+
+Run `npm run config:check` with `NODE_ENV=production` before every deploy to catch missing
+or obviously invalid configuration.
 
 ## 12. Dependency vulnerability assessment (audited 2026-10-14)
 
@@ -144,8 +211,8 @@ resolved with `npm audit fix --force`. Result: **26 → 17**, with no major-vers
 upgrade applied anywhere.
 
 > **Updated 2026-10-14 (second pass).** The Next.js/React upgrade described in
-> §12.2 has now landed. Current posture: **0 critical, 0 moderate, 0 low, 7 high —
-> and all 7 high entries are a single root advisory (`braces`)**. See §12.5.
+> §12.2 has now landed (see §12.4). Current posture: **0 critical, 0 moderate, 0 low,
+> 7 high — and all 7 high entries are a single root advisory (`braces`)**. See §12.2.
 
 ### 12.1 Fixed (safe, backward-compatible)
 
@@ -158,11 +225,11 @@ upgrade applied anywhere.
 | `overrides: @next/eslint-plugin-next → glob ^10.5.0` | 1 high (glob CLI command injection) | **Deliberately scoped** to that one package. A global `glob` override would have forced `rimraf`'s `glob@7` onto 10.x — a breaking API change. |
 
 Verification after the change: `tsc --noEmit` clean, `next lint` clean,
-**148/148 tests pass**, and `next build` completes (see §12.3 for build caveats).
+**148/148 tests pass**, and `next build` completes (see §12.3 for build caveats; the suite is now 282 passing).
 
 ### 12.2 Not fixed — requires a major upgrade (deliberate, not oversight)
 
-*Items marked ✅ RESOLVED were fixed by the Next.js 15 / React 19 upgrade in §12.5.*
+*Items marked ✅ RESOLVED were fixed by the Next.js 15 / React 19 upgrade in §12.4.*
 
 - ✅ RESOLVED — **`next` — CRITICAL, 23 advisories.** No patched 14.x exists (`next-14`
   dist-tag is 14.2.35; every advisory is fixed only in ≥15.5.24 or 16.x). Upgrading touches
@@ -194,7 +261,7 @@ Verification after the change: `tsc --noEmit` clean, `next lint` clean,
   published release and it is still vulnerable (advisory range `<=3.0.3`). Reachable
   only through Tailwind's build-time globbing and `@next/eslint-plugin-next`. The only
   remediation npm offers is `tailwindcss@4`, a different engine and config format.
-  **Accepted risk** — see §12.5 for the reachability analysis.
+  **Accepted risk** — see §12.4 for the reachability analysis.
 - ✅ RESOLVED — **`prisma` (high), `@prisma/config`, `deepmerge-ts`** — CLI/migrate-time
   only, not the runtime client. Cleared by the narrow `deepmerge-ts → ^8.0.2` override;
   `prisma`/`@prisma/config` were transitive-only entries with no advisory of their own,
@@ -211,7 +278,7 @@ Verification after the change: `tsc --noEmit` clean, `next lint` clean,
      Types came from a temporary scaffold inside `node_modules` that is **not committed** and
      must never be relied on. A real deploy must run `prisma generate` successfully.
 
-### 12.5 Next.js 15.5.27 / React 19.3.1 upgrade (landed 2026-10-14)
+### 12.4 Next.js 15.5.27 / React 19.3.1 upgrade (landed 2026-10-14)
 
 **Why 15.5.27 and not 16.x.** Every `next` advisory is fixed in `>=15.5.24`, so 15.5.27
 clears all 23. Next 16 was rejected for this pass for three concrete reasons: it requires
@@ -294,6 +361,35 @@ None of the three holds.
 It is recorded here so the `audit` job's failure is explainable at a glance, and so a
 future Tailwind 4 migration can close it deliberately.
 
+### 12.5 CI dependency-audit job status
+
+The `audit` job in `.github/workflows/ci.yml` runs `npm audit --audit-level=high`
+**without `continue-on-error`**, so its exit status is honest: it fails while any
+high or critical finding remains.
+
+That means **this job is expected to fail while any high finding remains**. As of the
+2026-10-14 upgrade it fails on exactly one root advisory, `braces` (§12.2), which has
+no patched release and no fix short of a `tailwindcss@4` migration.
+
+This is deliberate. The previous arrangement — `npm audit` as the last step of the
+`verify` job with `continue-on-error: true` — had two defects: the step never ran at
+all once typecheck failed, and even when it did run, its findings could not fail the
+job. A green badge obtained by suppressing a critical finding is worth less than a
+red one that is accurate.
+
+The `verify` and `migrations` jobs **pass**; only `audit` is red, and for a single
+documented, accepted root cause. Reviewers should treat a red `audit` + green
+everything-else as the expected state, and should treat any *new* high/critical
+finding — other than `braces` — as a regression.
+
+The job always publishes a markdown summary of every critical/high finding and
+uploads the full `npm audit --json` as the `npm-audit-json` artifact, so the result
+is inspectable without re-running anything.
+
+Do not "fix" a failing audit job by adding broad dependency overrides or by
+re-introducing `continue-on-error`. Remediate §12.2 or record an accepted risk here.
+
+
 ## 13. Fixed defect: security headers were never applied
 
 **Found and fixed 2026-10-14.** `middleware.ts` was committed at the *repository root*,
@@ -324,30 +420,46 @@ after : content-security-policy: default-src 'self'; ... frame-ancestors 'none';
 header values, including that HSTS appears only in production and that `ALLOW_DEV_FRAME_EMBED`
 cannot weaken production. Reintroducing the old file location fails 6 of its 7 tests.
 
-### 12.4 CI dependency-audit job status
+## 14. Change record — direct-to-private-storage uploads (2026-10-15)
 
-The `audit` job in `.github/workflows/ci.yml` runs `npm audit --audit-level=high`
-**without `continue-on-error`**, so its exit status is honest: it fails while any
-high or critical finding remains.
+**Why.** `MAX_FILE_SIZE` is 100 MB with up to 10 files per order (`src/lib/constants.ts`),
+but the proxy route has to carry those bytes through the application. On a function host
+(Vercel: **4.5 MB request body and 4.5 MB response body**) that is not a tuning problem —
+it is unbuildable. §11.1 item 6 recorded this as an operator's problem; it is now a code
+problem with a code answer.
 
-That means **this job is expected to fail while any high finding remains**. As of the
-2026-10-14 upgrade it fails on exactly one root advisory, `braces` (§12.5), which has
-no patched release and no fix short of a `tailwindcss@4` migration.
+**What changed.**
 
-This is deliberate. The previous arrangement — `npm audit` as the last step of the
-`verify` job with `continue-on-error: true` — had two defects: the step never ran at
-all once typecheck failed, and even when it did run, its findings could not fail the
-job. A green badge obtained by suppressing a critical finding is worth less than a
-red one that is accurate.
+| Area | Change |
+|---|---|
+| Protocol | `POST /api/uploads/intent` (authorize) → browser PUTs to a scoped, single-path, time-limited storage URL → `POST /api/uploads/complete` (verify). `POST /api/uploads/abort` releases an unused intent; `GET /api/uploads/capability` tells the browser which path to use. |
+| Verification | Completion re-reads the **measured size** (object metadata) and the **first 16 bytes** (signature) from storage. Client size/type claims are never trusted, and an object that disagrees is deleted with the row set to `FAILED`. |
+| Credential | HMAC-SHA-256 intent token bound to `(row, owner, key, claimed size, expiry, nonce)`, keyed on `SESSION_SECRET`; only its SHA-256 digest is stored, under a unique index, so it is single-use per row and a re-issued intent invalidates the previous token. |
+| Order gate | `createOrder` refuses any document whose row is not `COMPLETED` (new explicit 409), independent of `analysisStatus`. |
+| Downloads | `GET /api/files/:id/download` authorizes from the row, then answers **307 → short-lived signed URL** on `supabase` or a **stream** on `local`. It never buffers an object into a response body. |
+| Schema | Additive migration `20261015000000_direct_upload_intents`: `intent_expires_at`, `intent_token_hash` (unique), `verified_at`, `@@index([status, intent_expires_at])`. No column, row or constraint modified or dropped. |
+| Config | `DIRECT_UPLOADS_ENABLED`, `UPLOAD_INTENT_TTL_SECONDS`, `SIGNED_DOWNLOAD_URL_TTL_SECONDS`, `STORAGE_PROVIDER_MAX_FILE_BYTES`; all four validated by `scripts/check-env.ts` (and required on `supabase`). |
+| Rate limits | New buckets: upload intent 40/10 min, completion 40/10 min, download 120/10 min, keyed **per user** where an identity exists. |
 
-The `verify` and `migrations` jobs **pass**; only `audit` is red, and for a single
-documented, accepted root cause. Reviewers should treat a red `audit` + green
-everything-else as the expected state, and should treat any *new* high/critical
-finding — other than `braces` — as a regression.
+**Security properties gained** (all asserted in `tests/direct-upload-*.test.ts`, 121 tests):
+no writable bucket path from user input; one path per credential; no overwrite of an existing
+object; verification before usability; no credential in a URL, log, audit entry or cacheable
+response; identical answers for "not yours" and "does not exist".
 
-The job always publishes a markdown summary of every critical/high finding and
-uploads the full `npm audit --json` as the `npm-audit-json` artifact, so the result
-is inspectable without re-running anything.
+**Security properties NOT gained — say so plainly:**
+- **No content scanning.** A file that begins with `%PDF-1.4` and is 4 KB passes. That is a
+  format check, not a safety check. Malware scanning remains unwired (§11.2).
+- **No proof about the provider.** Storage is faked in tests. "Supabase enforces `expiresIn`",
+  "rejects an existing object at a signed-upload path", "returns a trustworthy `metadata.size`"
+  and "a signed URL is useless without its token" are *assumptions we verify manually* against
+  a real bucket — see `UPLOADS.md` §8.1 for the checklist.
+- **No resumption, and no antivirus quarantine.** A failed PUT is retried by the user, and an
+  object that fails verification is deleted rather than held for review.
+- **`intent_token_hash` is a digest, not an encryption.** A database dump still reveals who
+  uploaded what and when; it just cannot be replayed to complete an upload.
 
-Do not "fix" a failing audit job by adding broad dependency overrides or by
-re-introducing `continue-on-error`. Remediate §12.2 or record an accepted risk here.
+**Operator actions required.** (1) Raise/set the bucket's global per-file limit and mirror it
+in `STORAGE_PROVIDER_MAX_FILE_BYTES`. (2) Schedule `POST /api/admin/uploads/sweep` — nothing
+else reaps abandoned intents. (3) Confirm public access on the bucket stays off
+(the bucket must remain private — `UPLOADS.md` §4 and check 1 of §8.1). (4) Re-run the `UPLOADS.md` §8.1 manual checks after any
+Supabase plan change. See `DEPLOYMENT.md` §1a and `UPLOADS.md`.

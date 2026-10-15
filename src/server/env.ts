@@ -75,6 +75,48 @@ export const env = {
     return Math.max(0, Math.min(10, Math.floor(raw)));
   },
 
+  // ---------- Direct-to-storage uploads ----------
+  /**
+   * Master switch for the direct upload protocol (signed upload URL issued by the
+   * server, bytes sent browser → storage, server verifies afterwards). It is only
+   * implementable against a storage backend the browser can reach with a scoped
+   * credential, i.e. `supabase`; the `local` backend has no such mechanism and every
+   * direct-upload endpoint returns a clear 501 when it is selected.
+   */
+  get DIRECT_UPLOADS_ENABLED() {
+    const raw = process.env.DIRECT_UPLOADS_ENABLED;
+    // Default on: the 100 MB upload path is otherwise impossible on function hosts
+    // with a request-body cap. Set to "false" only as an incident kill-switch.
+    return raw === undefined || raw === "" ? true : bool("DIRECT_UPLOADS_ENABLED", true);
+  },
+  /** How long a signed upload intent stays completable. 60 s – 1 h. */
+  get UPLOAD_INTENT_TTL_SECONDS() {
+    const v = num("UPLOAD_INTENT_TTL_SECONDS", 600);
+    if (v < 60 || v > 3600) {
+      throw new Error("UPLOAD_INTENT_TTL_SECONDS must be between 60 and 3600 seconds");
+    }
+    return v;
+  },
+  /** Lifetime of the short-lived signed download URLs. 10 s – 15 min. */
+  get SIGNED_DOWNLOAD_URL_TTL_SECONDS() {
+    const v = num("SIGNED_DOWNLOAD_URL_TTL_SECONDS", 60);
+    if (v < 10 || v > 900) {
+      throw new Error("SIGNED_DOWNLOAD_URL_TTL_SECONDS must be between 10 and 900 seconds");
+    }
+    return v;
+  },
+  /**
+   * The provider's own per-file cap, if lower than the application limit. Supabase
+   * Free enforces a global 50 MB file limit that no application code can raise, so
+   * without this a 60 MB upload would fail with an opaque storage error instead of a
+   * precise, pre-flight rejection. `0`/unset means "the app limit is the binding one".
+   */
+  get STORAGE_PROVIDER_MAX_FILE_BYTES() {
+    const v = num("STORAGE_PROVIDER_MAX_FILE_BYTES", 0);
+    if (v < 0) throw new Error("STORAGE_PROVIDER_MAX_FILE_BYTES must not be negative");
+    return v;
+  },
+
   // ---------- Shared rate limiting ----------
   get RATE_LIMIT_STORAGE(): "memory" | "redis" {
     return process.env.RATE_LIMIT_STORAGE === "redis" ? "redis" : "memory";

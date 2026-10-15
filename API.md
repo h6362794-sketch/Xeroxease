@@ -5,7 +5,7 @@ Errors: `{ "error": string, "code"?: string }` with appropriate HTTP status. Int
 
 **Authentication** uses an HTTP-only session cookie (`xe_session`) set by login endpoints. Roles are always derived server-side from the session.
 
-Rate limits (per IP, per bucket): login 10/5min · register 5/h · forgot 3/15min · upload 30/10min · analyze 60/10min · payment submit 10/10min · feedback 10/h · order create 20/h · cancel 10/h · admin 120/min.
+Rate limits (per IP, and per user where an identity is available; per user is used for upload/download buckets): login 10/5min · register 5/h · forgot 3/15min · upload 30/10min · upload intent 40/10min · upload complete 40/10min · download 120/10min · analyze 60/10min · payment submit 10/10min · feedback 10/h · order create 20/h · cancel 10/h · admin 120/min.
 
 ---
 
@@ -36,11 +36,16 @@ Rate limits (per IP, per bucket): login 10/5min · register 5/h · forgot 3/15mi
 
 ## Files & documents
 
-| Method | Path | Auth | Notes |
-|---|---|---|---|
-| POST | `/uploads` | session | multipart `file`. Validates extension + MIME + magic bytes + size (≤100 MB) + filename. Stored privately. |
-| POST | `/documents/analyze` | owner | `{ fileId }`. Runs server-side page/slide-count analysis; stores `pageCount`, `pageCountSource`, `analysisStatus`. |
-| GET | `/files/:id/download` | owner / ADMIN | IDOR-guarded stream; audited. |
+| Method | Path | Auth | Body | Notes |
+|---|---|---|---|---|
+| GET | `/uploads/capability` | session | — | `{ enabled, maxBytes, providerMaxBytes, resumable, proxyUploadAvailable, code?, reason? }`. Tells the browser whether to use the direct or proxy path. No secrets, no bucket names. |
+| POST | `/uploads/intent` | session | `{ filename, mimeType?, sizeBytes, orderId? }` | **Direct upload step 1.** Authorizes one document: validates metadata, creates a `PENDING` row, mints a server-only storage key + a single-path, time-limited signed upload URL. `201 → { mode:"direct", fileId, token, uploadUrl, headers:{}, maxBytes, expiresAt, fileSizeLimitNote }`. 501 on `local` backend, 503 when disabled or misconfigured, 413 over the limit, 409 over quota. The `token` is a one-use completion credential: never store it, log it or put it in a URL. |
+| POST | `/uploads/complete` | owner | `{ fileId, token }` | **Direct upload step 3.** Server re-reads the object (measured size + first bytes) and verifies it against the intent, then sets `COMPLETED`. No client size/type claim is accepted. `410` expired · `409` missing object/storage unavailable · `413` oversized · `422` size or signature mismatch (object deleted, row `FAILED`) · `403` forged/replayed token or foreign document. Idempotent: repeating after success re-verifies nothing and returns the same payload. |
+| POST | `/uploads/abort` | owner | `{ fileId }` | Releases an unverified intent and deletes its object, returning the per-order file slot. Refused (`409`) once a document is verified. |
+| POST | `/uploads` | session | multipart `file` | **Proxy path (development / `local` backend).** Validates extension + MIME + magic bytes + size (≤100 MB, inclusive) + filename on the real bytes, writes, then creates the row as `COMPLETED`. Bounded by the platform's request-body limit, so unusable for large files on Vercel. |
+| POST | `/admin/uploads/sweep?limit=50` | SUPER_ADMIN | — | Reaps expired `PENDING` intents and their objects (limit 1–500). Bounded and re-runnable; the app has no scheduler. Audited. |
+| POST | `/documents/analyze` | owner | `{ fileId }` | Runs server-side page/slide-count analysis; stores `pageCount`, `pageCountSource`, `analysisStatus`. Only meaningful once a document is `COMPLETED`. |
+| GET | `/files/:id/download` | owner / ADMIN | — | IDOR-guarded. `supabase`: `307` to a short-lived signed URL (`no-store`, `no-referrer`, `noindex`) so bytes never cross a function body. `local`: streamed response. Non-`COMPLETED` documents 404 for everyone, including admins. `?mode=view` requests inline display. |
 
 ## Payment (QR workflow)
 

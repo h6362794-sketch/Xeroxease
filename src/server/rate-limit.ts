@@ -153,6 +153,13 @@ export const RATE_LIMITS = {
   // Admin-assisted issuance is a sensitive, audited action.
   adminRecoveryCode: { limit: 20, windowMs: 60 * 60_000 },
   upload: { limit: 30, windowMs: 10 * 60_000 },
+  // Direct uploads: intent issuance mints one signed URL per document, completion is
+  // one verification per document. Both are cheap but must not be enumerable, so the
+  // budgets sit just above what the 10-file order flow can legitimately use.
+  uploadIntent: { limit: 40, windowMs: 10 * 60_000 },
+  uploadComplete: { limit: 40, windowMs: 10 * 60_000 },
+  // Per-user budget for obtaining a short-lived read URL.
+  download: { limit: 120, windowMs: 10 * 60_000 },
   analyze: { limit: 60, windowMs: 10 * 60_000 },
   paymentSubmit: { limit: 10, windowMs: 10 * 60_000 },
   feedback: { limit: 10, windowMs: 60 * 60_000 },

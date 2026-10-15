@@ -281,6 +281,14 @@ model UploadedFile {
   sizeBytes     Int      @map("size_bytes")
   checksum      String?
   status        UploadStatus @default(PENDING)
+  // Direct-to-storage upload intent. `intentExpiresAt` bounds the window in which a
+  // PENDING row may still be completed; after it passes, both the row and any object
+  // left at `storageKey` are garbage for `releaseExpiredIntents`. `intentTokenHash`
+  // stores only a SHA-256 digest of the completion token, so a row dump cannot be
+  // replayed and issuing a new intent invalidates the previous token immediately.
+  intentExpiresAt  DateTime? @map("intent_expires_at")
+  intentTokenHash  String?   @unique @map("intent_token_hash")
+  verifiedAt    DateTime?  @map("verified_at")
   pageCount     Int?     @map("page_count")
   pageCountSource PageCountSource? @map("page_count_source")
   analysisStatus AnalysisStatus @default(PENDING) @map("analysis_status")
@@ -293,6 +301,7 @@ model UploadedFile {
 
   @@index([orderId])
   @@index([uploaderId])
+  @@index([status, intentExpiresAt])
   @@map("uploaded_files")
 }
 

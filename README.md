@@ -2,7 +2,7 @@
 
 A production-grade, full-stack document-printing platform for students: **upload → AI page detection → customize → QR payment → track → collect → rate.**
 
-Built with Next.js 14, TypeScript (strict), Tailwind CSS, Framer Motion, Prisma, and Supabase PostgreSQL.
+Built with Next.js 15, React 19, TypeScript (strict), Tailwind CSS, Framer Motion, Prisma, and Supabase PostgreSQL.
 
 ---
 
@@ -10,7 +10,7 @@ Built with Next.js 14, TypeScript (strict), Tailwind CSS, Framer Motion, Prisma,
 
 ### Students
 - **Register / login** with email or registration number; **email-free password recovery** via a single-use 160-bit recovery code you generate yourself (no mail provider, no paid service)
-- **Multi-step order wizard**: drag-and-drop upload (PDF/DOC/DOCX/PPT/PPTX, 100 MB/file), AI page detection, print configuration (A4/Legal, colour required, sides, copies, custom page ranges), finishing (staple/spiral/stick file), review, QR payment, confirmation
+- **Multi-step order wizard**: drag-and-drop upload (PDF/DOC/DOCX/PPT/PPTX, **100 MB/file**, direct to private storage — see [`UPLOADS.md`](UPLOADS.md)), server-side page detection, print configuration (A4/Legal, colour required, sides, copies, custom page ranges), finishing (staple/spiral/stick file), review, QR payment, confirmation
 - **Server-verified page counts** — pricing is always computed on the server from parsed documents
 - **QR payment workflow**: scan the desk's UPI QR, submit the transaction reference, admin verifies
 - **Live order tracking** with an animated status timeline and polling updates
@@ -86,14 +86,14 @@ Full setup walkthrough: [`SETUP.md`](SETUP.md) · Database details: [`DATABASE.m
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 14 (App Router), React 18, TypeScript strict |
+| Frontend | Next.js 15.5 (App Router), React 19, TypeScript strict |
 | Styling | Tailwind CSS, custom design tokens (Netflix-inspired dark theme) |
 | Motion | Framer Motion (reduced-motion aware) |
 | Database | Supabase PostgreSQL + Prisma ORM |
 | Auth | Custom sessions (HTTP-only cookies), Argon2id |
-| Storage | Private local directory (development) / Supabase Storage (production) |
+| Storage | Private local directory (development) / Supabase Storage (production), with server-authorized **direct browser uploads** for documents |
 | Validation | Zod on every external input |
-| Tests | Vitest (100 unit tests) + GitHub Actions CI |
+| Tests | Vitest (282 unit/security tests) + GitHub Actions CI |
 
 ---
 
@@ -152,6 +152,7 @@ npm run db:seed      # seed development data
 
 - The payment flow is **QR/scanner-based** with manual admin verification by design (no payment gateway, no card data). The system never auto-confirms payments without a verified integration.
 - Uploaded documents live in **private storage** and are served only via authenticated, ownership-checked endpoints. Production requires `STORAGE_BACKEND=supabase` (or an explicit `ALLOW_EPHEMERAL_LOCAL_STORAGE=true`), because ephemeral disks silently lose documents that the database still references.
+- On a function host (Vercel) document bytes **never** pass through the app: the server authorizes a scoped, short-lived upload URL, the browser PUTs to storage, and the server re-verifies the stored object's measured size and signature before the document may be ordered. Downloads answer with a 307 to a short-lived signed URL. Rationale, failure modes and limits: [`UPLOADS.md`](UPLOADS.md).
 - Page counts are only priced when **verified**. Heuristic estimates (raw-byte PDF counting, page-break counting, legacy `.doc`) return an explicit `NEEDS_REVIEW` state that the student or an administrator must confirm before ordering.
 - QR collection is **atomic**: concurrent scans of the same collection code produce exactly one fulfilled order.
 - This project aims for strong defense-in-depth; **no system is "100% secure"** — see SECURITY.md for remaining operational responsibilities.

@@ -66,17 +66,36 @@ interface OrderableFile {
   pageCount: number | null;
   analysisStatus: string;
   orderId: string | null;
+  /** Upload lifecycle state — `COMPLETED` means the stored bytes were verified. */
+  status: string;
 }
 
 export async function createOrder(input: CreateOrderInput) {
-  // Load files with ownership verification (IDOR protection).
+  // Load files with ownership verification (IDOR protection). The status is *not*
+  // filtered in SQL on purpose: an unverified document must produce a different, more
+  // useful error than a foreign one, and both checks below run before any pricing or
+  // write. Nothing is orderable unless this list is fully owned **and** verified.
   const files = (await prisma.uploadedFile.findMany({
     where: { id: { in: input.fileIds }, uploaderId: input.userId },
+    select: { id: true, uploaderId: true, pageCount: true, analysisStatus: true, orderId: true, status: true },
   })) as OrderableFile[];
-  if (files.length !== input.fileIds.length) {
+  if (files.length !== new Set(input.fileIds).size) {
     throw new OrderError("One or more files could not be found or are not yours.", 403);
   }
   if (files.length === 0) throw new OrderError("Upload at least one document.", 400);
+
+  // Only a *verified* document may be printed. With direct-to-storage uploads the row
+  // is created before the bytes exist, so `status` — not `analysisStatus` — is the
+  // proof that an object was measured at the expected key and passed its signature
+  // check. PENDING (bytes never arrived or were never checked) and FAILED (rejected or
+  // abandoned) are refused here, before the order, an event or a price exists.
+  const unverified = files.filter((f) => f.status !== "COMPLETED");
+  if (unverified.length > 0) {
+    throw new OrderError(
+      "One or more documents have not finished uploading and verifying. Please wait for them to complete.",
+      409
+    );
+  }
 
   // All files must be fully analyzed before ordering.
   const notAnalyzed = files.filter(
