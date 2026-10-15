@@ -6,7 +6,7 @@
 //     object key. A client supplies only a document id; it cannot name a key, so a
 //     guessed or borrowed key is not an input to the decision at all.
 //  2. On the `supabase` backend the bytes must not pass through this function — a
-//     100 MB response body is impossible on a platform that caps response bodies at
+//     50 MB response body is impossible on a platform that caps response bodies at
 //     4.5 MB. So the route answers with a 307 to a *short-lived, object-specific*
 //     signed URL and never touches the payload. `local` cannot sign, so it keeps
 //     serving through the existing stream path (development only).

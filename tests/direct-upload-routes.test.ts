@@ -66,7 +66,7 @@ async function load() {
     method: "PUT" as const,
     headers: {},
     expiresAt: new Date(Date.now() + 600_000).toISOString(),
-    maxBytes: 100 * 1024 * 1024,
+    maxBytes: 50 * 1024 * 1024,
     proxyUploadAvailable: false,
     fileSizeLimitNote: null,
   }));
@@ -206,7 +206,7 @@ describe("GET /api/uploads/capability", () => {
     const res = await routes.capability.GET();
     expect(res.status).toBe(200);
     const json = await body(res);
-    expect(json).toMatchObject({ enabled: true, maxBytes: 100 * 1024 * 1024, resumable: false, proxyUploadAvailable: false });
+    expect(json).toMatchObject({ enabled: true, maxBytes: 50 * 1024 * 1024, resumable: false, proxyUploadAvailable: false });
     const dump = JSON.stringify(json);
     for (const secret of ["test-service-role-key", "PROVIDER-TOKEN", KEY, "signed", "https://test-project.supabase.co"]) {
       expect(dump, `capability leaked ${secret}`).not.toContain(secret);
@@ -227,7 +227,7 @@ describe("POST /api/uploads/intent", () => {
     const res = await routes.intent.POST(post({ filename: "notes.pdf", mimeType: "application/pdf", sizeBytes: 4096 }));
     expect(res.status).toBe(201);
     const json = await body(res);
-    expect(json).toMatchObject({ mode: "direct", fileId: FILE_ID, method: "PUT", maxBytes: 100 * 1024 * 1024 });
+    expect(json).toMatchObject({ mode: "direct", fileId: FILE_ID, method: "PUT", maxBytes: 50 * 1024 * 1024 });
     expect(json.headers).toEqual({});
     expect(typeof json.token).toBe("string");
     // The route forwards exactly what the caller declared; the service decides.
@@ -259,10 +259,10 @@ describe("POST /api/uploads/intent", () => {
   });
 
   it("keeps a size rejection visible as 413 with its code", async () => {
-    createUploadIntent.mockRejectedValueOnce(new UploadServiceError("File exceeds the 100 MB limit.", 413, "TOO_LARGE"));
-    const res = await routes.intent.POST(post({ filename: "big.pdf", sizeBytes: 101 * 1024 * 1024 }));
+    createUploadIntent.mockRejectedValueOnce(new UploadServiceError("File exceeds the 50 MB limit.", 413, "TOO_LARGE"));
+    const res = await routes.intent.POST(post({ filename: "big.pdf", sizeBytes: 51 * 1024 * 1024 }));
     expect(res.status).toBe(413);
-    expect(await body(res)).toEqual({ error: "File exceeds the 100 MB limit.", code: "TOO_LARGE" });
+    expect(await body(res)).toEqual({ error: "File exceeds the 50 MB limit.", code: "TOO_LARGE" });
   });
 
   it("answers an unsupported deployment with 501 and a machine-readable code", async () => {

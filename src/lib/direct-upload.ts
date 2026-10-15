@@ -2,10 +2,10 @@
  * Browser side of the direct-to-private-storage upload protocol.
  *
  * The bytes go *here*: browser → storage host, never through a Next.js route. That is
- * the only way a 100 MB document can survive a function host's request-body cap. The
+ * the only way a 50 MB document can survive a function host's request-body cap. The
  * application's job is the part around it: authorize (intent), then verify (complete).
  *
- * Kept dependency-free on purpose (XHR rather than `fetch`): a PUT of a 100 MB blob
+ * Kept dependency-free on purpose (XHR rather than `fetch`): a PUT of a 50 MB blob
  * needs upload progress and a real abort, and `fetch` gives you neither without a
  * streams polyfill.
  */
@@ -24,7 +24,7 @@ export interface UploadIntent {
   maxBytes: number;
   /**
    * Whether `POST /api/uploads` is a usable fallback for *this* deployment. It is
-   * advisory only: a host with a small request-body cap cannot carry a 100 MB file,
+   * advisory only: a host with a small request-body cap cannot carry a 50 MB file,
    * which is why production refuses the proxy path for documents.
    */
   proxyUploadAvailable: boolean;
@@ -187,7 +187,7 @@ export async function uploadDocumentDirect<TComplete = unknown>(
 /**
  * Release the intent only when completion proved the object is unusable. On a network
  * fault or a storage outage the bytes may well be fine, and the intent stays live so a
- * retry re-completes the *same* upload instead of re-sending 100 MB.
+ * retry re-completes the *same* upload instead of re-sending 50 MB.
  */
 export function shouldReleaseIntentAfterFailure(err: unknown): boolean {
   const code = (err as { code?: string } | null)?.code;

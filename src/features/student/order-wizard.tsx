@@ -44,7 +44,7 @@ export function OrderWizard({ userId }: { userId: string }) {
   const [step, setStep] = useState(0);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [uploading, setUploading] = useState<{ name: string; progress: number } | null>(null);
-  // `null` = unknown yet. The direct path is the only one that can carry a 100 MB
+  // `null` = unknown yet. The direct path is the only one that can carry a 50 MB
   // document on a function host, so it is preferred whenever the deployment supports
   // it; `proxy` remains for local development (see /api/uploads/capability).
   const [uploadMode, setUploadMode] = useState<"direct" | "proxy" | null>(null);
@@ -404,7 +404,7 @@ export function OrderWizard({ userId }: { userId: string }) {
                   <>
                     <UploadCloud className="h-10 w-10 text-zinc-500 mx-auto mb-3" />
                     <p className="text-sm font-semibold text-white">Drop files here or tap to browse</p>
-                    <p className="text-xs text-zinc-500 mt-1.5">PDF, DOC, DOCX, PPT, PPTX · up to 100 MB each · max {MAX_FILES_PER_ORDER} files</p>
+                    <p className="text-xs text-zinc-500 mt-1.5">PDF, DOC, DOCX, PPT, PPTX · up to 50 MB each · max {MAX_FILES_PER_ORDER} files</p>
                   </>
                 )}
               </div>

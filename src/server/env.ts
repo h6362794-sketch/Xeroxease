@@ -85,7 +85,7 @@ export const env = {
    */
   get DIRECT_UPLOADS_ENABLED() {
     const raw = process.env.DIRECT_UPLOADS_ENABLED;
-    // Default on: the 100 MB upload path is otherwise impossible on function hosts
+    // Default on: the 50 MB upload path is otherwise impossible on function hosts
     // with a request-body cap. Set to "false" only as an incident kill-switch.
     return raw === undefined || raw === "" ? true : bool("DIRECT_UPLOADS_ENABLED", true);
   },
@@ -106,10 +106,10 @@ export const env = {
     return v;
   },
   /**
-   * The provider's own per-file cap, if lower than the application limit. Supabase
-   * Free enforces a global 50 MB file limit that no application code can raise, so
-   * without this a 60 MB upload would fail with an opaque storage error instead of a
-   * precise, pre-flight rejection. `0`/unset means "the app limit is the binding one".
+   * The provider's own per-file cap, if lower than the application limit (50 MiB).
+   * Supabase Free enforces a global 50 MB file limit that no application code can raise,
+   * so this value should mirror the provider's cap. `0`/unset means "the app limit is
+   * the binding one".
    */
   get STORAGE_PROVIDER_MAX_FILE_BYTES() {
     const v = num("STORAGE_PROVIDER_MAX_FILE_BYTES", 0);

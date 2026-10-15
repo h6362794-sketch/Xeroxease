@@ -6,7 +6,7 @@
 // and storage side lives in `./service.ts`.
 //
 // Why this exists at all: a Vercel Function caps a request *and* response body at
-// 4.5 MB, while the product requires 100 MB documents. The only architecture that
+// 4.5 MB, while the product requires 50 MB documents. The only architecture that
 // satisfies both is "server authorizes, browser transfers, server verifies":
 //
 //   1. POST /api/uploads/intent    → server validates metadata, creates the PENDING
@@ -43,7 +43,7 @@ export function normalizeDeclaredSize(input: unknown): number | null {
   return null;
 }
 
-/** The limit that actually binds us: the app's 100 MB and any lower provider cap. */
+/** The limit that actually binds us: the app's 50 MiB and any lower provider cap. */
 export function effectiveMaxBytes(): number {
   const providerCap = env.STORAGE_PROVIDER_MAX_FILE_BYTES;
   return providerCap > 0 ? Math.min(MAX_FILE_SIZE, providerCap) : MAX_FILE_SIZE;
@@ -441,7 +441,7 @@ export function decideCompletion(input: CompletionCheckInput): CompletionDecisio
 /**
  * Fingerprint recorded alongside the verified size. Deliberately a *verification
  * fingerprint*, not a content-integrity guarantee: computing it from the first bytes
- * plus the length avoids re-downloading 100 MB at completion time, while still
+ * plus the length avoids re-downloading 50 MB at completion time, while still
  * detecting a swapped or truncated object.
  */
 function sha256Hex(headerBytes: Uint8Array, sizeBytes: number): string {

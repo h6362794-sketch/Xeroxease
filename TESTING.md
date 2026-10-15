@@ -35,7 +35,7 @@ is documentation, not a guard.
 | `tests/doc-analysis.test.ts` | **Analysis accuracy**: authoritative `<Pages>`/slide parts, page-break estimate forced to `NEEDS_REVIEW`, malformed/truncated ZIP safety, legacy `.doc` review state |
 | `tests/storage-key.test.ts` | **Storage-key safety**: path traversal, absolute paths, control chars, hidden-file prefixes, per-owner scoping, collision-free keys |
 | `tests/order-creation.test.ts` | **Order creation**: a `NEEDS_REVIEW` page count is never priced, IDOR on files rejected, already-attached documents refused, **unverified (`PENDING`) upload rows rejected before pricing**, server-side pricing and page-selection maths |
-| `tests/direct-upload-policy.test.ts` | **Direct-upload decision layer** (38): declared-size parsing, 100 MB boundary inclusive, provider cap precedence and its error text, extension/MIME/double-extension rules, per-order quota, HMAC intent-token mint/verify (rotation, tampering, re-signing, expiry, clamped TTL), row binding (`uploadTokenMatchesRow`), **completion verification** (measured-size equality, signature check, missing object, expired window, already-FAILED refusal, idempotent retry), download authorization + cache-header discipline |
+| `tests/direct-upload-policy.test.ts` | **Direct-upload decision layer** (38): declared-size parsing, 50 MiB boundary inclusive, provider cap precedence and its error text, extension/MIME/double-extension rules, per-order quota, HMAC intent-token mint/verify (rotation, tampering, re-signing, expiry, clamped TTL), row binding (`uploadTokenMatchesRow`), **completion verification** (measured-size equality, signature check, missing object, expired window, already-FAILED refusal, idempotent retry), download authorization + cache-header discipline |
 | `tests/direct-upload-service.test.ts` | **Direct-upload service** (31) with Prisma and the storage adapter faked: key minted server-side, row created `PENDING`, only the token *digest* persisted, audit entries free of tokens/keys/signed URLs, quota and order-ownership checks, 501/503 capability refusals, completion writing the **measured** size, forged/mismatched/rotated/expired tokens, object deleted on deterministic rejection, **row kept `PENDING` on storage outage**, guarded `updateMany` race, abort rules, bounded sweep |
 | `tests/direct-upload-routes.test.ts` | **HTTP contract** (29): 401 before any work on all six routes, SUPER_ADMIN-only sweep, capability payload leaking no secret/bucket/key, zod 422 vs domain 413/409/410/422, **501 `DIRECT_UPLOAD_UNSUPPORTED` kept visible instead of masked as 500**, provider error text never forwarded, download 307 headers (`no-store`, `no-referrer`, `noindex`, **no `Vary`**, empty body), identical 404 for foreign-vs-missing, `COMPLETED`-only serving, 503 instead of buffering on signing failure, local-backend streaming |
 | `tests/direct-upload-client.test.ts` | **Browser side** (23): mode selection that can never dead-end the wizard, pre-flight limits, `isUnsupportedDeployment` (only 501/503 deployment codes fall back to proxy — never 401/409/413/5xx faults), bare PUT with no `Authorization` header, progress clamping, 409-vs-other status mapping, abort semantics (including "never send if already aborted"), and intent release **only** when completion proved the object unusable |
@@ -46,7 +46,7 @@ is documentation, not a guard.
 The suite directly asserts the security behaviors required by the spec:
 
 - ✅ Manipulated **file type**: executable magic bytes renamed `.pdf` → rejected (`validateUpload`)
-- ✅ **Oversized file**: >100 MB → rejected
+- ✅ **Oversized file**: >50 MiB → rejected
 - ✅ **Malicious filename**: `../../etc/passwd.pdf`, control chars, `invoice.pdf.exe` → sanitized/rejected
 - ✅ **Invalid order status transition**: e.g. `ORDER_PLACED → PRINTING` → not allowed
 - ✅ **Terminal states**: COMPLETED/CANCELLED/FAILED cannot transition
@@ -84,7 +84,7 @@ These are covered by server-side guards; verify with curl/Postman:
 | `/api/auth/recovery/code` without a session | 401 |
 | `/api/admin/users/:id/recovery-code` as ADMIN (not SUPER_ADMIN) | 403 |
 | Redeeming an already-used recovery code | 400 `RECOVERY_FAILED`, identical to every other failure |
-| Oversized upload (Content-Length > 100 MB) | 413 before the body is parsed |
+| Oversized upload (Content-Length > 50 MiB) | 413 before the body is parsed |
 | Uploading two `file` parts in one request | 400 (one file per request) |
 | `.doc` upload then order | Analysis reports `NEEDS_REVIEW`; order blocked until the student confirms the page count |
 | Second scan of a used collection QR | 409 `ALREADY_USED`, order unchanged |

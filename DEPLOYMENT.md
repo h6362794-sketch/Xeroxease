@@ -10,7 +10,7 @@
    - `STORAGE_BACKEND` — must be `supabase` on Vercel (see warning below), plus `STORAGE_BUCKET` (default `documents`), `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
    - `RATE_LIMIT_STORAGE=redis` with `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` for shared abuse protection across instances
    - `TRUSTED_PROXY_COUNT` — number of reverse-proxy hops in front of the app (Vercel: `1`). Set `0` only if the app is directly exposed; see SECURITY.md
-   - `DIRECT_UPLOADS_ENABLED=true` (default), `UPLOAD_INTENT_TTL_SECONDS=600`, `SIGNED_DOWNLOAD_URL_TTL_SECONDS=60` and, **if the Supabase plan caps per-file size below 100 MB, `STORAGE_PROVIDER_MAX_FILE_BYTES`** (Supabase Free: `52428800` = 50 MB). See [`UPLOADS.md`](UPLOADS.md).
+   - `DIRECT_UPLOADS_ENABLED=true` (default), `UPLOAD_INTENT_TTL_SECONDS=600`, `SIGNED_DOWNLOAD_URL_TTL_SECONDS=60` and, **for Supabase Free-tier deployments, `STORAGE_PROVIDER_MAX_FILE_BYTES=52428800`** (50 MB). See [`UPLOADS.md`](UPLOADS.md).
    - Do **not** set `NODE_ENV`; Vercel manages it
 
    There is **no email/SMS configuration**: password recovery is email-free (recovery
@@ -72,13 +72,13 @@
 
 ### Reverse-proxy / hosting limits (uploads)
 
-The app enforces a 100 MB per-file limit (inclusive) and rejects oversized bodies before parsing. Two independent ceilings apply to a deployment:
+The app enforces a 50 MiB (52,428,800 bytes) per-file limit (inclusive) and rejects oversized bodies before parsing. Two independent ceilings apply to a deployment:
 
-| Ceiling | Value | Who enforces it | What happens when it is smaller than 100 MB |
+| Ceiling | Value | Who enforces it | What happens when it is smaller than 50 MiB |
 |---|---|---|---|
-| Vercel Function request **and** response body | 4.5 MB, not raisable | Vercel, at the edge | **Avoided, not raised:** with direct uploads the bytes go browser → Supabase Storage and the answer to a download is a 307 to a signed URL, so no 100 MB body ever crosses a function. Only the legacy proxy path (`STORAGE_BACKEND=local`, dev) and the ≤5 MB payment QR still cross it. |
-| Supabase per-file limit | **50 MB on Free**, up to 500 GB on Pro+ | Supabase Storage, mid-transfer | A 60 MB file is accepted by our API and rejected by the provider, so the browser sees a failed PUT. Mirror the provider cap in `STORAGE_PROVIDER_MAX_FILE_BYTES` to fail fast at intent time, and record that **a $0/month Supabase plan cannot hold a 100 MB document at all** — do not infer from this repository that the free plan satisfies the requirement. |
-| nginx / your proxy | `client_max_body_size` (you set it) | the proxy | Only relevant if you keep the proxy path: set `client_max_body_size 110M;`. With direct uploads, nothing but the small JSON intent calls reaches the app. |
+| Vercel Function request **and** response body | 4.5 MB, not raisable | Vercel, at the edge | **Avoided, not raised:** with direct uploads the bytes go browser → Supabase Storage and the answer to a download is a 307 to a signed URL, so no 50 MB body ever crosses a function. Only the legacy proxy path (`STORAGE_BACKEND=local`, dev) and the ≤5 MB payment QR still cross it. |
+| Supabase per-file limit | **50 MB on Free**, up to 500 GB on Pro+ | Supabase Storage, mid-transfer | Mirror the provider cap in `STORAGE_PROVIDER_MAX_FILE_BYTES` to fail fast at intent time. The Free-tier cap matches the application limit. |
+| nginx / your proxy | `client_max_body_size` (you set it) | the proxy | Only relevant if you keep the proxy path: set `client_max_body_size 55M;`. With direct uploads, nothing but the small JSON intent calls reaches the app. |
 
 - Always forward `X-Forwarded-For` so rate limiting keys on the real client IP, and set `TRUSTED_PROXY_COUNT` to the true hop count.
 - Keep the app on **one origin**: sessions are first-party cookies and CORS is not configured (`CSP: connect-src 'self'`).
@@ -122,7 +122,7 @@ pm2 start npm --name xeroxease -- start   # or systemd unit
 
 Reverse proxy requirements:
 - Terminate TLS (e.g., Let's Encrypt via Caddy or certbot)
-- `client_max_body_size 110M;` (nginx) for 100 MB uploads
+- `client_max_body_size 55M;` (nginx) for 50 MB uploads
 - Forward `X-Forwarded-For` so rate limiting sees real client IPs
 
 Persistent storage: point `LOCAL_STORAGE_DIR` at a durable volume and back it up.
@@ -142,10 +142,10 @@ the check.
 - [ ] Default/seed credentials rotated or deleted
 - [ ] HTTPS enforced; HSTS active (automatic in production middleware)
 - [ ] Upload dir (or buckets) **private** and included in backups
-- [ ] `STORAGE_BUCKET` exists as a **private** bucket; per-file provider limit ≥ 100 MB (or `STORAGE_PROVIDER_MAX_FILE_BYTES` mirrors the lower cap on purpose)
-- [ ] Direct-upload round trip exercised end to end at the **largest size the provider actually allows** — 100 MB requires a paid storage plan, and that test has **not** been run by this repository's CI. Work through the nine manual
+- [ ] `STORAGE_BUCKET` exists as a **private** bucket; per-file provider limit ≥ 50 MiB (or `STORAGE_PROVIDER_MAX_FILE_BYTES` mirrors the lower cap on purpose)
+- [ ] Direct-upload round trip exercised end to end at the **largest size the provider actually allows** — verify against a real Supabase bucket. The test has **not** been run by this repository's CI. Work through the nine manual
   provider checks in [`UPLOADS.md`](UPLOADS.md) §8.1 — the app returns 2xx against a bucket
-  that fails check 1, because it never looks at the public URL. Record the exact size you tested; do not report "100 MB verified" without it.
+  that fails check 1, because it never looks at the public URL. Record the exact size you tested; do not report "50 MB verified" without it.
 - [ ] `POST /api/admin/uploads/sweep` scheduled somewhere (cron / Vercel Cron / a reminder), since there is no in-app scheduler for abandoned uploads
 - [ ] Admin accounts provisioned via Super Admin only; no shared accounts
 - [ ] Payment QR uploaded + enabled in Admin → Settings

@@ -70,7 +70,7 @@ export function validateUpload(
   }
   if (sizeBytes <= 0) return { ok: false, error: "Empty file", ext, mime: declaredMime };
   if (sizeBytes > MAX_FILE_SIZE) {
-    return { ok: false, error: "File exceeds the 100 MB limit", ext, mime: declaredMime };
+    return { ok: false, error: `File exceeds the ${Math.floor(MAX_FILE_SIZE / (1024 * 1024))} MB limit`, ext, mime: declaredMime };
   }
   const allowedMimes = EXT_TO_MIME[ext] || [];
   // Some OS/browser combos send generic octet-stream; require match only when a specific type is declared.

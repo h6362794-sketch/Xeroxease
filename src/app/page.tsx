@@ -119,7 +119,7 @@ function FloatingDocs() {
 }
 
 const STEPS = [
-  { icon: UploadCloud, title: "Upload Documents", text: "PDF, DOC, DOCX, PPT, PPTX up to 100 MB each. Drag, drop, done — from your phone or laptop." },
+  { icon: UploadCloud, title: "Upload Documents", text: "PDF, DOC, DOCX, PPT, PPTX up to 50 MB each. Drag, drop, done — from your phone or laptop." },
   { icon: ScanSearch, title: "AI Page Detection", text: "Our document engine counts pages automatically before you pay. No surprises at the counter." },
   { icon: SlidersHorizontal, title: "Customize Printing", text: "A4 or Legal, B&W or colour, single or double side, copies, custom page ranges, stapling and binding." },
   { icon: QrCode, title: "Pay via QR", text: "Scan the print desk's UPI QR with any payment app. Submit the reference — we verify it quickly." },

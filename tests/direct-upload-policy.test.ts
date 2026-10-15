@@ -117,31 +117,31 @@ describe("upload intent validation", () => {
     maxFilesPerOrder: 10,
   };
 
-  it("accepts a well-formed PDF request at the 100 MB boundary (inclusive)", () => {
+  it("accepts a well-formed PDF request at the 50 MiB boundary (inclusive)", () => {
     const d = policy.decideUploadIntent({ ...base, filename: "notes.pdf", sizeBytes: MAX_FILE_SIZE });
     expect(d.ok).toBe(true);
   });
 
-  it("rejects 100 MB + 1 byte and says which limit it hit", () => {
+  it("rejects 50 MiB + 1 byte and says which limit it hit", () => {
     const d = policy.decideUploadIntent({ ...base, filename: "notes.pdf", sizeBytes: MAX_FILE_SIZE + 1 });
     expect(d).toMatchObject({ ok: false, status: 413, code: "TOO_LARGE" });
-    expect((d as { error: string }).error).toContain("100 MB");
+    expect((d as { error: string }).error).toContain("50 MB");
   });
 
-  it("keeps the application limit at exactly 100 MB", () => {
+  it("keeps the application limit at exactly 50 MiB", () => {
     envOverrides.STORAGE_PROVIDER_MAX_FILE_BYTES = 0;
-    expect(policy.effectiveMaxBytes()).toBe(100 * MB);
+    expect(policy.effectiveMaxBytes()).toBe(50 * MB);
   });
 
   it("prefers a LOWER provider cap and explains how to raise it", () => {
-    // Supabase Free enforces a 50 MB global per-file cap that app code cannot raise.
-    envOverrides.STORAGE_PROVIDER_MAX_FILE_BYTES = 50 * MB;
-    expect(policy.effectiveMaxBytes()).toBe(50 * MB);
-    const d = policy.decideUploadIntent({ ...base, filename: "big.pdf", sizeBytes: 60 * MB });
+    // A provider with a 40 MB per-file cap is stricter than the app's 50 MiB limit.
+    envOverrides.STORAGE_PROVIDER_MAX_FILE_BYTES = 40 * MB;
+    expect(policy.effectiveMaxBytes()).toBe(40 * MB);
+    const d = policy.decideUploadIntent({ ...base, filename: "big.pdf", sizeBytes: 45 * MB });
     expect(d).toMatchObject({ ok: false, status: 413, code: "PROVIDER_TOO_LARGE" });
     expect((d as { error: string }).error).toMatch(/STORAGE_PROVIDER_MAX_FILE_BYTES|global file size/);
     // …while a file inside the provider cap is still fine.
-    expect(policy.decideUploadIntent({ ...base, filename: "ok.pdf", sizeBytes: 49 * MB }).ok).toBe(true);
+    expect(policy.decideUploadIntent({ ...base, filename: "ok.pdf", sizeBytes: 39 * MB }).ok).toBe(true);
   });
 
   it("never lets a provider cap raise the application limit", () => {
@@ -447,7 +447,7 @@ describe("completion verification (what the object actually is)", () => {
     expect(d).toMatchObject({ ok: false, status: 413, code: "TOO_LARGE", deleteObject: true });
   });
 
-  it("accepts a verified object at exactly the 100 MB limit", () => {
+  it("accepts a verified object at exactly the 50 MiB limit", () => {
     const grant = policy.issueUploadIntentGrant({ ...CLAIM, sizeBytes: MAX_FILE_SIZE, ttlSeconds: 600 });
     const { file } = fileRow({ sizeBytes: MAX_FILE_SIZE, intentTokenHash: grant.tokenHash });
     const d = decide({
