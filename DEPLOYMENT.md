@@ -10,6 +10,7 @@
    - `STORAGE_BACKEND` — must be `supabase` on Vercel (see warning below), plus `STORAGE_BUCKET` (default `documents`), `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
    - `RATE_LIMIT_STORAGE=redis` with `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` for shared abuse protection across instances
    - `TRUSTED_PROXY_COUNT` — number of reverse-proxy hops in front of the app (Vercel: `1`). Set `0` only if the app is directly exposed; see SECURITY.md
+   - `DIRECT_UPLOADS_ENABLED=true` (default), `UPLOAD_INTENT_TTL_SECONDS=600`, `SIGNED_DOWNLOAD_URL_TTL_SECONDS=60` and, **if the Supabase plan caps per-file size below 100 MB, `STORAGE_PROVIDER_MAX_FILE_BYTES`** (Supabase Free: `52428800` = 50 MB). See [`UPLOADS.md`](UPLOADS.md).
    - Do **not** set `NODE_ENV`; Vercel manages it
 
    There is **no email/SMS configuration**: password recovery is email-free (recovery
@@ -63,17 +64,25 @@
 5. **First admin**: do **not** rely on `npm run db:seed` in production (it refuses the documented default passwords). Either run it with `SEED_ADMIN_PASSWORD=<strong unique value>` and rotate immediately, or create the first Super Admin through the Super Admin console.
 6. **Deploy**. Build command is `prisma generate && next build` (set in package.json).
 
-> ⚠️ With `STORAGE_BACKEND=local` on Vercel, uploaded files live on ephemeral storage and are lost between invocations while the database still references them — students would see orders whose documents have vanished. The app now **refuses to start writing** with local storage in production and fails with a clear error. Either configure Supabase Storage (`STORAGE_BACKEND=supabase`, one private bucket named by `STORAGE_BUCKET`, default `documents`), or set `ALLOW_EPHEMERAL_LOCAL_STORAGE=true` to explicitly accept possible data loss.
+> ⚠️ With `STORAGE_BACKEND=local` on Vercel, uploaded files live on ephemeral storage and are lost between invocations while the database still references them — students would see orders whose documents have vanished. The write guard (`assertDurableBackend`, `src/server/storage.ts`) refuses such a write with a `StorageError`, and `npm run config:check` fails the deploy for the same configuration with an explicit message.
 >
-> The backend interface (`saveBuffer`, `openStream`, `fileExists`, `deleteFile`, `buildStorageKey`, `readHeader`) is fully implemented for both backends, so switching requires no code change.
+> **Be precise about how the guard behaves:** it is a **write-time** check on the paths that save bytes, not a boot-time check, and `withErrorHandling` renders any 5xx to the browser as "Something went wrong. Please try again." — the actionable text is in the **server log**, not the user's screen. So `config:check` in the pipeline (not the runtime guard) is what stops a misconfigured deploy. There is no automatic fallback to local storage; direct uploads simply return 501 with the reason.
+>
+> Backend interface (`src/server/storage.ts`): `saveBuffer`, `openStream`, `readBuffer`, `fileExists`, `deleteFile`, `buildStorageKey`, `readHeader`, plus the direct-upload set `createSignedUploadTarget`, `getStoredObjectInfo`, `createSignedDownloadUrl` and the `assertDirectUploadBackend()` probe. Swapping `STORAGE_BACKEND` needs no code change; `local` additionally keeps the proxy upload path and loses the direct one (501 by design).
 
 ### Reverse-proxy / hosting limits (uploads)
 
-The app enforces a 100 MB per-file limit and rejects oversized bodies before parsing. Also configure the platform itself:
+The app enforces a 100 MB per-file limit (inclusive) and rejects oversized bodies before parsing. Two independent ceilings apply to a deployment:
 
-- Vercel has a hard request-body limit (~4.5 MB on the default plan); large uploads require a platform that permits larger bodies, or direct-to-storage uploads.
-- nginx: `client_max_body_size 110M;`
-- Always forward `X-Forwarded-For` so rate limiting keys on the real client IP.
+| Ceiling | Value | Who enforces it | What happens when it is smaller than 100 MB |
+|---|---|---|---|
+| Vercel Function request **and** response body | 4.5 MB, not raisable | Vercel, at the edge | **Avoided, not raised:** with direct uploads the bytes go browser → Supabase Storage and the answer to a download is a 307 to a signed URL, so no 100 MB body ever crosses a function. Only the legacy proxy path (`STORAGE_BACKEND=local`, dev) and the ≤5 MB payment QR still cross it. |
+| Supabase per-file limit | **50 MB on Free**, up to 500 GB on Pro+ | Supabase Storage, mid-transfer | A 60 MB file is accepted by our API and rejected by the provider, so the browser sees a failed PUT. Mirror the provider cap in `STORAGE_PROVIDER_MAX_FILE_BYTES` to fail fast at intent time, and record that **a $0/month Supabase plan cannot hold a 100 MB document at all** — do not infer from this repository that the free plan satisfies the requirement. |
+| nginx / your proxy | `client_max_body_size` (you set it) | the proxy | Only relevant if you keep the proxy path: set `client_max_body_size 110M;`. With direct uploads, nothing but the small JSON intent calls reaches the app. |
+
+- Always forward `X-Forwarded-For` so rate limiting keys on the real client IP, and set `TRUSTED_PROXY_COUNT` to the true hop count.
+- Keep the app on **one origin**: sessions are first-party cookies and CORS is not configured (`CSP: connect-src 'self'`).
+- `maxDuration` on `/api/uploads` is 60 s; direct uploads do not depend on it because the function never handles the body.
 
 ### Backup
 
@@ -118,6 +127,13 @@ Reverse proxy requirements:
 
 Persistent storage: point `LOCAL_STORAGE_DIR` at a durable volume and back it up.
 
+With `STORAGE_BACKEND=local` there is **no direct upload path** (`/api/uploads/intent`
+answers 501): documents go through the app and are bounded by your proxy's body limit,
+which is fine at 110 MB on nginx. `config:check` fails a *production* `local` deployment
+on exactly this point — if you run a durable VPS with local storage deliberately, either
+switch to Supabase Storage or accept the warning path consciously rather than silencing
+the check.
+
 ## Post-deploy security checklist
 
 - [ ] `npm run config:check` passes with `NODE_ENV=production`
@@ -126,6 +142,11 @@ Persistent storage: point `LOCAL_STORAGE_DIR` at a durable volume and back it up
 - [ ] Default/seed credentials rotated or deleted
 - [ ] HTTPS enforced; HSTS active (automatic in production middleware)
 - [ ] Upload dir (or buckets) **private** and included in backups
+- [ ] `STORAGE_BUCKET` exists as a **private** bucket; per-file provider limit ≥ 100 MB (or `STORAGE_PROVIDER_MAX_FILE_BYTES` mirrors the lower cap on purpose)
+- [ ] Direct-upload round trip exercised end to end at the **largest size the provider actually allows** — 100 MB requires a paid storage plan, and that test has **not** been run by this repository's CI. Work through the nine manual
+  provider checks in [`UPLOADS.md`](UPLOADS.md) §8.1 — the app returns 2xx against a bucket
+  that fails check 1, because it never looks at the public URL. Record the exact size you tested; do not report "100 MB verified" without it.
+- [ ] `POST /api/admin/uploads/sweep` scheduled somewhere (cron / Vercel Cron / a reminder), since there is no in-app scheduler for abandoned uploads
 - [ ] Admin accounts provisioned via Super Admin only; no shared accounts
 - [ ] Payment QR uploaded + enabled in Admin → Settings
 - [ ] Super Admin → Audit Logs receiving events (test a login + order)

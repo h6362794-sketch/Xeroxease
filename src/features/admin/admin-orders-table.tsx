@@ -261,7 +261,7 @@ function OrderManageModal({ order, onClose, onChanged }: { order: AdminOrder; on
                       )}
                     </p>
                   </div>
-                  <a href={`/api/files/${f.id}/download`} target="_blank" rel="noopener" className="rounded-lg p-2 text-zinc-400 hover:text-white hover:bg-white/10 shrink-0" aria-label="View file">
+                  <a href={`/api/files/${f.id}/download?mode=view`} target="_blank" rel="noopener noreferrer" className="rounded-lg p-2 text-zinc-400 hover:text-white hover:bg-white/10 shrink-0" aria-label="View file" title="Opens in a new tab">
                     <Eye className="h-4 w-4" />
                   </a>
                 </div>

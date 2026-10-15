@@ -12,6 +12,17 @@ import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api-client";
 import { cn, formatBytes, formatCurrencyINR } from "@/lib/utils";
 import { MAX_FILES_PER_ORDER } from "@/lib/constants";
+import {
+  chooseUploadMode,
+  exceedsUploadLimit,
+  isUnsupportedDeployment,
+  uploadDocumentDirect,
+  type UploadCapability,
+  type UploadIntent,
+} from "@/lib/direct-upload";
+
+/** Shape returned by POST /api/uploads/complete — the server-verified truth. */
+type DirectCompleteResponse = { file: { id: string; originalName: string; sizeBytes: number; mimeType: string } };
 
 interface FileItem {
   id: string;
@@ -33,6 +44,15 @@ export function OrderWizard({ userId }: { userId: string }) {
   const [step, setStep] = useState(0);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [uploading, setUploading] = useState<{ name: string; progress: number } | null>(null);
+  // `null` = unknown yet. The direct path is the only one that can carry a 100 MB
+  // document on a function host, so it is preferred whenever the deployment supports
+  // it; `proxy` remains for local development (see /api/uploads/capability).
+  const [uploadMode, setUploadMode] = useState<"direct" | "proxy" | null>(null);
+  const [capability, setCapability] = useState<UploadCapability | null>(null);
+  const inflight = useRef<Map<string, AbortController>>(new Map());
+  // Set once a 501/503 from the intent endpoint has demoted this session to proxy
+  // uploads, so we pay for that retry per session rather than per file.
+  const demotedToProxy = useRef(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -53,6 +73,36 @@ export function OrderWizard({ userId }: { userId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pageCountDraft, setPageCountDraft] = useState<Record<string, string>>({});
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const caps = await api<UploadCapability>("/api/uploads/capability");
+        if (cancelled) return;
+        setCapability(caps);
+        setUploadMode(chooseUploadMode(caps));
+      } catch {
+        // Probe failed: keep the pre-existing behaviour rather than blocking uploads.
+        if (cancelled) return;
+        setUploadMode("proxy");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Closing the wizard must not leave a browser PUT streaming into storage for a file
+  // the user has abandoned: abort everything still in flight (the intent then expires
+  // and the object is swept).
+  useEffect(() => {
+    const controllers = inflight.current;
+    return () => {
+      for (const controller of controllers.values()) controller.abort();
+      controllers.clear();
+    };
+  }, []);
 
   const allAnalyzed = files.length > 0 && files.every((f) => f.analysisStatus === "COMPLETED" || f.analysisStatus === "NEEDS_REVIEW");
   const anyNeedsReview = files.some((f) => f.analysisStatus === "NEEDS_REVIEW" || f.analysisStatus === "FAILED");
@@ -121,6 +171,75 @@ export function OrderWizard({ userId }: { userId: string }) {
     }
   };
 
+  const uploadViaProxy = useCallback(
+    async (file: File): Promise<{ id: string; name: string; sizeBytes: number; analysisStatus: string }> => {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await api<{ file: { id: string; originalName: string; sizeBytes: number } }>("/api/uploads", {
+        method: "POST",
+        body: fd,
+      });
+      return { id: res.file.id, name: res.file.originalName, sizeBytes: res.file.sizeBytes, analysisStatus: "PENDING" };
+    },
+    []
+  );
+
+  const uploadOne = useCallback(
+    async (
+      file: File
+    ): Promise<{ id: string; name: string; sizeBytes: number; analysisStatus: string }> => {
+      const limit = capability?.maxBytes ?? 0;
+      if (limit > 0 && exceedsUploadLimit(file.size, limit)) {
+        throw new Error(`File exceeds the ${Math.floor(limit / (1024 * 1024))} MB limit.`);
+      }
+
+      if (uploadMode === "direct") {
+        const controller = new AbortController();
+        inflight.current.set(file.name, controller);
+        let intent: UploadIntent;
+        try {
+          intent = await api<UploadIntent>("/api/uploads/intent", {
+            method: "POST",
+            json: { filename: file.name, mimeType: file.type, sizeBytes: file.size },
+          });
+        } catch (err) {
+          inflight.current.delete(file.name);
+          // A deployment that does not run this protocol should still accept the file
+          // the way it always did — once, so a genuinely broken host does not retry on
+          // every pick. Anything else propagates with the server's real message.
+          if (isUnsupportedDeployment(err) && !demotedToProxy.current) {
+            demotedToProxy.current = true;
+            setUploadMode("proxy");
+            return uploadViaProxy(file);
+          }
+          throw err;
+        }
+        try {
+          // Server verifies size + signature after the transfer, so the completion
+          // response — not the browser's File object — is what the list is built from.
+          const { fileId, complete } = await uploadDocumentDirect<DirectCompleteResponse>(file, {
+            requestIntent: async () => intent,
+            reportComplete: (payload) => api<{ file: DirectCompleteResponse["file"] }>("/api/uploads/complete", { method: "POST", json: payload }),
+            releaseIntent: (id) => api("/api/uploads/abort", { method: "POST", json: { fileId: id } }).catch(() => undefined),
+            onProgress: (fraction) => setUploading({ name: file.name, progress: Math.round(fraction * 100) }),
+            signal: controller.signal,
+          });
+          return {
+            id: fileId,
+            name: complete?.file?.originalName ?? file.name,
+            sizeBytes: complete?.file?.sizeBytes ?? file.size,
+            analysisStatus: "PENDING",
+          };
+        } finally {
+          inflight.current.delete(file.name);
+        }
+      }
+
+      return uploadViaProxy(file);
+    },
+    [capability, uploadMode, uploadViaProxy]
+  );
+
   const uploadFiles = useCallback(
     async (list: FileList | File[]) => {
       const arr = Array.from(list);
@@ -129,28 +248,27 @@ export function OrderWizard({ userId }: { userId: string }) {
           toast(`Up to ${MAX_FILES_PER_ORDER} files per order.`, "error");
           break;
         }
-        setUploading({ name: f.name, progress: 15 });
+        setUploading({ name: f.name, progress: 5 });
         try {
-          const fd = new FormData();
-          fd.append("file", f);
-          setUploading({ name: f.name, progress: 45 });
-          const res = await api<{ file: { id: string; originalName: string; sizeBytes: number } }>("/api/uploads", {
-            method: "POST",
-            body: fd,
-          });
-          setUploading({ name: f.name, progress: 80 });
+          const result = await uploadOne(f);
           setFiles((prev) => [
             ...prev,
-            { id: res.file.id, originalName: res.file.originalName, sizeBytes: res.file.sizeBytes, pageCount: null, analysisStatus: "PENDING" },
+            {
+              id: result.id,
+              originalName: result.name,
+              sizeBytes: result.sizeBytes,
+              pageCount: null,
+              analysisStatus: result.analysisStatus,
+            },
           ]);
           setUploading({ name: f.name, progress: 100 });
         } catch (err) {
-          toast(err instanceof ApiError ? err.message : "Upload failed. Please try again.", "error");
+          toast(err instanceof ApiError || err instanceof Error ? err.message : "Upload failed. Please try again.", "error");
         }
       }
       setUploading(null);
     },
-    [files.length, toast]
+    [files.length, toast, uploadOne]
   );
 
   const runAnalysis = async () => {

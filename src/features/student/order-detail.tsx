@@ -247,7 +247,9 @@ export function OrderDetail({ orderId }: { orderId: string; userId: string }) {
             </div>
             <a
               href={`/api/files/${f.id}/download`}
-              target="_blank" rel="noopener"
+              /* `noreferrer`: the route answers with a short-lived signed storage URL,
+                 and a referrer header would hand it to anything the tab links on to. */
+              target="_blank" rel="noopener noreferrer"
               className="rounded-lg p-2 text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
               aria-label={`Download ${f.originalName}`}
             >

@@ -117,8 +117,7 @@ async function supabaseExists(storageKey: string): Promise<boolean> {
 
 // ---------- Local Storage helpers ----------
 
-function resolveBaseDir(): string {
-  const dir = env.LOCAL_STORAGE_DIR;
+function resolveBaseDir(): string {  const dir = env.LOCAL_STORAGE_DIR;
   // Absolute path support; relative paths anchored to project root (process.cwd()).
   return path.isAbsolute(dir) ? dir : path.join(process.cwd(), dir);
 }
@@ -163,6 +162,182 @@ function assertDurableBackend(): void {
     "Refusing to store uploaded documents on ephemeral local disk in production. Configure Supabase Storage (STORAGE_BACKEND=supabase) or set ALLOW_EPHEMERAL_LOCAL_STORAGE=true to accept possible data loss.",
     500
   );
+}
+
+// ---------- Direct-to-storage uploads (server-authorized, browser-executed) ----------
+//
+// These are the only operations that make a >4.5 MB upload possible on a function host:
+// the bytes never pass through this application. The server asks Storage for a
+// single-path, time-limited upload authorization, hands the browser that URL, and
+// verifies the stored object independently afterwards. The service-role key is used
+// exclusively for these server-side calls and is never returned to a client.
+
+/** Base URL of the Storage API for this project (`.../storage/v1`). */
+function storageApiBase(): string {
+  return `${env.SUPABASE_URL}/storage/v1`;
+}
+
+/** Percent-encode every path segment of a storage key (keys are server-generated). */
+function encodedPath(storageKey: string): string {
+  return storageKey.split("/").map(encodeURIComponent).join("/");
+}
+
+/**
+ * Everything the direct-upload protocol needs from a storage backend. A backend that
+ * cannot answer these (i.e. `local`) must fail with status 501 so the caller reports an
+ * unsupported deployment shape instead of silently degrading to a proxied upload.
+ */
+function requireSignedUploadSupport(operation: string): void {
+  if (env.STORAGE_BACKEND === "supabase") return;
+  throw new StorageError(
+    `${operation} requires STORAGE_BACKEND=supabase: the local backend cannot issue a ` +
+      `browser-usable, scoped storage credential. Uploads keep working through ` +
+      `POST /api/uploads (proxy mode) in development.`,
+    501
+  );
+}
+
+export interface SignedUploadTarget {
+  /** Absolute URL the browser PUTs the raw bytes to. Already carries the token. */
+  uploadUrl: string;
+  /** Server-generated object path. Returned for logging/verification only. */
+  path: string;
+  /** Provider-side expiry of `uploadUrl` (seconds from now), if it reported one. */
+  expiresIn: number;
+}
+
+/**
+ * Ask Storage for a signed upload URL for exactly `storageKey`.
+ *
+ * Supabase issues this endpoint with `x-upsert: false` semantics by default, so an
+ * object that already exists at the key is rejected rather than silently replaced.
+ * The returned URL embeds the one-purpose token; the caller must forward it to the
+ * authenticated owner and must never log it.
+ */
+export async function createSignedUploadTarget(
+  storageKey: string,
+  opts: { expiresInSec: number }
+): Promise<SignedUploadTarget> {
+  requireSignedUploadSupport("Direct upload");
+  const { key } = await getSupabaseClient();
+  const res = await fetch(`${storageApiBase()}/object/upload/sign/${bucket()}/${encodedPath(storageKey)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ expiresIn: opts.expiresInSec }),
+    signal: AbortSignal.timeout(STORAGE_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const body = (await res.text().catch(() => "")).slice(0, 200);
+    throw new StorageError(`Could not create an upload authorization (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as { signedUrl?: string; url?: string; token?: string };
+  // The API returns either a full `signedUrl` or a relative `url` with the token in
+  // its query string; both describe the same PUT target.
+  const raw = data.signedUrl ?? data.url;
+  if (!raw) throw new StorageError("Upload authorization response contained no URL");
+  const uploadUrl = raw.startsWith("http") ? raw : `${env.SUPABASE_URL}${raw.startsWith("/") ? "" : "/"}${raw}`;
+  return { uploadUrl, path: storageKey, expiresIn: opts.expiresInSec };
+}
+
+/**
+ * Metadata Storage reports for a stored object. Used to verify an upload against
+ * something other than the client's own claim. `null` means "no such object" — the
+ * caller treats that as a failed verification, never as a permission detail.
+ */
+export interface StoredObjectInfo {
+  sizeBytes: number | null;
+  mimeType: string | null;
+}
+
+export async function getStoredObjectInfo(storageKey: string): Promise<StoredObjectInfo | null> {
+  if (env.STORAGE_BACKEND === "supabase") {
+    const { key } = await getSupabaseClient();
+    const res = await fetch(`${storageApiBase()}/object/info/${bucket()}/${encodedPath(storageKey)}`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(STORAGE_TIMEOUT_MS),
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new StorageError(`Storage metadata lookup failed (${res.status})`);
+    const data = (await res.json()) as {
+      size?: number | string;
+      metadata?: { size?: number | string; mimeType?: string };
+    };
+    const sizeRaw = data.metadata?.size ?? data.size;
+    const size = sizeRaw === undefined || sizeRaw === null ? null : Number(sizeRaw);
+    return {
+      sizeBytes: size !== null && Number.isFinite(size) ? size : null,
+      mimeType: data.metadata?.mimeType ?? null,
+    };
+  }
+  // Local backend: the filesystem is the source of truth.
+  try {
+    const st = await stat(localPath(storageKey));
+    if (!st.isFile()) return null;
+    return { sizeBytes: st.size, mimeType: null };
+  } catch {
+    return null;
+  }
+}
+
+export interface SignedDownloadTarget {
+  url: string;
+  expiresIn: number;
+}
+
+/**
+ * Short-lived, object-specific read URL for a private object.
+ *
+ * `download` is a display name only — the caller must have resolved it from a
+ * database row, never from user-controlled input at request time.
+ */
+export async function createSignedDownloadUrl(
+  storageKey: string,
+  opts: { expiresInSec: number; download?: string }
+): Promise<SignedDownloadTarget> {
+  requireSignedUploadSupport("Signed download URL");
+  const { key } = await getSupabaseClient();
+  const res = await fetch(`${storageApiBase()}/object/sign/${bucket()}/${encodedPath(storageKey)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      expiresIn: opts.expiresInSec,
+      ...(opts.download ? { download: opts.download } : {}),
+    }),
+    signal: AbortSignal.timeout(STORAGE_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const body = (await res.text().catch(() => "")).slice(0, 200);
+    throw new StorageError(`Could not create a download authorization (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as { signedUrl?: string; signedURL?: string };
+  const raw = data.signedUrl ?? data.signedURL;
+  if (!raw) throw new StorageError("Download authorization response contained no URL");
+  const url = raw.startsWith("http") ? raw : `${env.SUPABASE_URL}${raw.startsWith("/") ? "" : "/"}${raw}`;
+  return { url, expiresIn: opts.expiresInSec };
+}
+
+/**
+ * Startup/deploy-time configuration probe for the direct upload protocol. Throws a
+ * single, actionable `StorageError` (status 500) instead of letting a misconfigured
+ * deployment half-work: the whole point of the protocol is that bytes bypass the app,
+ * which is only true against a browser-reachable private bucket.
+ */
+export function assertDirectUploadBackend(): void {
+  if (env.STORAGE_BACKEND !== "supabase") {
+    throw new StorageError(
+      "Direct uploads require STORAGE_BACKEND=supabase. Use POST /api/uploads (proxy mode) for local development.",
+      500
+    );
+  }
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new StorageError(
+      "Direct uploads are enabled but NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not configured.",
+      500
+    );
+  }
+  if (!/^https:\/\//i.test(env.SUPABASE_URL)) {
+    throw new StorageError("NEXT_PUBLIC_SUPABASE_URL must be an https:// URL.", 500);
+  }
 }
 
 // ---------- Public API ----------

@@ -9,7 +9,14 @@ npm run typecheck   # strict TypeScript
 npm run lint        # ESLint (Next.js core-web-vitals)
 ```
 
-Current suite: **100 tests, 10 files** — all passing (`npm test`).
+Current suite: **286 tests in 20 files** — 282 pass, 4 skip (the PostgreSQL-only
+concurrency file plus its guards, which need a real database). `npm test`.
+
+The suite grew the same way the security surface did: each incident/audit finding that
+produced a code change also produced a file that would fail if the change were reverted.
+That is why `tests/migration-index.test.ts` and `tests/request-security.test.ts` exist at
+all. New tests should follow that rule — a test that cannot fail when the guard is removed
+is documentation, not a guard.
 
 ## Unit test coverage
 
@@ -27,7 +34,11 @@ Current suite: **100 tests, 10 files** — all passing (`npm test`).
 | `tests/request-security.test.ts` | **Request-level security** (14): `getClientIp` reads `TRUSTED_PROXY_COUNT` hops from the right so forged `X-Forwarded-For` prefixes cannot pick a rate-limit bucket; the bounded multipart stream rejects an oversized body even when `Content-Length` lies |
 | `tests/doc-analysis.test.ts` | **Analysis accuracy**: authoritative `<Pages>`/slide parts, page-break estimate forced to `NEEDS_REVIEW`, malformed/truncated ZIP safety, legacy `.doc` review state |
 | `tests/storage-key.test.ts` | **Storage-key safety**: path traversal, absolute paths, control chars, hidden-file prefixes, per-owner scoping, collision-free keys |
-| `tests/order-creation.test.ts` | **Order creation**: a `NEEDS_REVIEW` page count is never priced, IDOR on files rejected, already-attached documents refused, server-side pricing and page-selection maths |
+| `tests/order-creation.test.ts` | **Order creation**: a `NEEDS_REVIEW` page count is never priced, IDOR on files rejected, already-attached documents refused, **unverified (`PENDING`) upload rows rejected before pricing**, server-side pricing and page-selection maths |
+| `tests/direct-upload-policy.test.ts` | **Direct-upload decision layer** (38): declared-size parsing, 100 MB boundary inclusive, provider cap precedence and its error text, extension/MIME/double-extension rules, per-order quota, HMAC intent-token mint/verify (rotation, tampering, re-signing, expiry, clamped TTL), row binding (`uploadTokenMatchesRow`), **completion verification** (measured-size equality, signature check, missing object, expired window, already-FAILED refusal, idempotent retry), download authorization + cache-header discipline |
+| `tests/direct-upload-service.test.ts` | **Direct-upload service** (31) with Prisma and the storage adapter faked: key minted server-side, row created `PENDING`, only the token *digest* persisted, audit entries free of tokens/keys/signed URLs, quota and order-ownership checks, 501/503 capability refusals, completion writing the **measured** size, forged/mismatched/rotated/expired tokens, object deleted on deterministic rejection, **row kept `PENDING` on storage outage**, guarded `updateMany` race, abort rules, bounded sweep |
+| `tests/direct-upload-routes.test.ts` | **HTTP contract** (29): 401 before any work on all six routes, SUPER_ADMIN-only sweep, capability payload leaking no secret/bucket/key, zod 422 vs domain 413/409/410/422, **501 `DIRECT_UPLOAD_UNSUPPORTED` kept visible instead of masked as 500**, provider error text never forwarded, download 307 headers (`no-store`, `no-referrer`, `noindex`, **no `Vary`**, empty body), identical 404 for foreign-vs-missing, `COMPLETED`-only serving, 503 instead of buffering on signing failure, local-backend streaming |
+| `tests/direct-upload-client.test.ts` | **Browser side** (23): mode selection that can never dead-end the wizard, pre-flight limits, `isUnsupportedDeployment` (only 501/503 deployment codes fall back to proxy — never 401/409/413/5xx faults), bare PUT with no `Authorization` header, progress clamping, 409-vs-other status mapping, abort semantics (including "never send if already aborted"), and intent release **only** when completion proved the object unusable |
 | `tests/pricing-boundaries.test.ts` | Money boundaries: double-side rounding, copies, finishing, missing prices, negative/NaN inputs, fractional rates, maximum copies |
 
 ## Security test matrix
@@ -41,6 +52,8 @@ The suite directly asserts the security behaviors required by the spec:
 - ✅ **Terminal states**: COMPLETED/CANCELLED/FAILED cannot transition
 - ✅ **Price integrity**: server engine is the only calculator; client input absent from `calculatePrice`
 - ✅ **Unverified page counts are never priced**: a `NEEDS_REVIEW` document is rejected at order creation even if it carries an estimate
+- ✅ **Unverified documents are never orderable or downloadable**: a direct-upload row stays `PENDING` until the *stored object* is measured and signature-checked; completion with a foreign/rotated/forged token is refused, and `/api/files/:id/download` 404s for anything but `COMPLETED` — for an admin too (`tests/direct-upload-service.test.ts`, `tests/direct-upload-routes.test.ts`, `tests/order-creation.test.ts`)
+- ✅ **No credential in a cacheable place**: the completion token is returned in a POST body and hashed at rest; the download redirect carries `no-store` and **no `Vary`**, so no intermediary can cache a signed URL (`tests/direct-upload-routes.test.ts`)
   - ✅ **Single-use QR collection**: 8 concurrent scans of the same code produce exactly 1 fulfilled order *(mocked in-memory client — proves the application guard, not database serialisation)*
   - ✅ **Single-use recovery codes (application logic)**: 8 concurrent redemptions produce exactly 1 password change, against a **mocked in-memory client**
   - ✅ **Single-use recovery codes (database, authoritative)**: 8 **independent PostgreSQL 16 connections** racing one code produce exactly 1 winner, 1 password change, a spent code and revoked sessions — `tests/recovery-concurrency.pg.test.ts`, run in the CI `migrations` job
@@ -138,7 +151,7 @@ Be clear about what a green test run does and does not prove in this environment
   | PostgreSQL / Prisma client (unit tests) | **Yes** — an in-memory stand-in | `tests/recovery.test.ts`, `tests/collection-token.test.ts` and friends run against JavaScript arrays. They prove **application logic only**: they exercise no real SQL, no real constraint, no row locking and no MVCC. A "concurrent" test there interleaves promises over an array — it cannot show that a database serialises anything. |
   | PostgreSQL (integration test) | **No** — real PostgreSQL 16 | `tests/recovery-concurrency.pg.test.ts` opens independent `PrismaClient` instances against a real database. **This is the authoritative concurrency proof.** It skips without `DATABASE_URL`, so it needs CI (or a local Postgres) to actually run. |
   | Migration replay / drift | **No** in CI; N/A locally | `npm run schema:check` is a **text** comparison (tables, columns, indexes, unique constraints) and has previously **passed while real drift existed**. The authoritative check is `prisma migrate diff --exit-code` against PostgreSQL 16 in the CI `migrations` job. Only that replays the SQL. |
-  | Supabase Storage | **Yes** | Upload/download/delete against real object storage is unverified. |
+  | Supabase Storage | **Yes** | Upload/download/delete against real object storage is unverified. `tests/direct-upload-*.test.ts` fake `src/server/storage.ts`, so what they prove is that **we send the right request and trust only the response**: they do not prove Supabase honours `expiresIn`, rejects an existing object at a signed-upload path, returns `metadata.size` in `/object/info`, or that a signed URL is unreachable without the token. Those four properties are the load-bearing assumptions of the whole protocol (see `UPLOADS.md` §8.1) and can only be checked against a real bucket. |
   | Google Fonts at build time | **Yes** in this sandbox (`NEXT_FONT_GOOGLE_MOCKED_RESPONSES`) | The real build needs egress to `fonts.googleapis.com`. CI has normal network access, so the CI build is **not** mocked. |
   | Redis/Upstash rate limiting | No (in-memory in tests) | Shared-counter behaviour across instances is unverified; only the failure modes (fail-closed by default, fail-open on explicit opt-in) are covered. |
   | Email | **N/A** | The app sends no email at all. |

@@ -13,6 +13,8 @@ type FileRow = {
   pageCount: number | null;
   analysisStatus: string;
   orderId: string | null;
+  /** Upload lifecycle status. `createOrder` only accepts "COMPLETED". */
+  status: string;
 };
 
 let files: FileRow[] = [];
@@ -24,7 +26,9 @@ vi.mock("@/lib/prisma", () => ({
     uploadedFile: {
       findMany: async (args: { where: { id: { in: string[] }; uploaderId: string } }) =>
         files.filter(
-          (f) => args.where.id.in.includes(f.id) && f.uploaderId === args.where.uploaderId
+          (f) =>
+            args.where.id.in.includes(f.id) &&
+            f.uploaderId === args.where.uploaderId
         ),
     },
     order: {
@@ -109,28 +113,37 @@ beforeEach(async () => {
 
 describe("page-count verification before pricing", () => {
   it("rejects a NEEDS_REVIEW document even when a pageCount estimate exists", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: 42, analysisStatus: "NEEDS_REVIEW", orderId: null }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 42, analysisStatus: "NEEDS_REVIEW", status: "COMPLETED", orderId: null }];
     await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
     expect(created).toHaveLength(0);
   });
 
   it("rejects a FAILED document", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: null, analysisStatus: "FAILED", orderId: null }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: null, analysisStatus: "FAILED", status: "COMPLETED", orderId: null }];
     await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
   });
 
   it("rejects a document still being analyzed", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: null, analysisStatus: "PROCESSING", orderId: null }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: null, analysisStatus: "PROCESSING", status: "COMPLETED", orderId: null }];
     await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
   });
 
   it("rejects a document with no page count", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: null, analysisStatus: "COMPLETED", orderId: null }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: null, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
     await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
   });
 
+  it("rejects a document that was uploaded but never verified against storage", async () => {
+    // The direct-upload path creates PENDING rows the moment the browser is handed an
+    // upload URL. Such a row has no verified bytes behind it, so it must not be orderable
+    // even though nothing else about it looks wrong.
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 10, analysisStatus: "COMPLETED", status: "PENDING", orderId: null }];
+    await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
+    expect(created).toHaveLength(0);
+  });
+
   it("accepts a fully verified document and prices it on the server", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: 10, analysisStatus: "COMPLETED", orderId: null }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 10, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
     const order = await orders.createOrder({ ...baseInput, copies: 2, finishing: ["STAPLE"] });
     // 10 pages * 2 copies = 20 billable pages @ 2 = 40, + 5 staple = 45
     expect(Number(order.totalAmount)).toBe(45);
@@ -140,13 +153,13 @@ describe("page-count verification before pricing", () => {
 
 describe("ownership and reuse", () => {
   it("refuses files owned by another user (IDOR)", async () => {
-    files = [{ id: "file-1", uploaderId: "someone-else", pageCount: 3, analysisStatus: "COMPLETED", orderId: null }];
+    files = [{ id: "file-1", uploaderId: "someone-else", pageCount: 3, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
     await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 403 });
     expect(created).toHaveLength(0);
   });
 
   it("refuses documents already attached to an order", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: 3, analysisStatus: "COMPLETED", orderId: "existing-order" }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 3, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: "existing-order" }];
     await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
   });
 
@@ -157,14 +170,14 @@ describe("ownership and reuse", () => {
 
 describe("custom page selection", () => {
   it("validates the range against the verified count", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: 5, analysisStatus: "COMPLETED", orderId: null }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 5, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
     await expect(
       orders.createOrder({ ...baseInput, pageSelection: "CUSTOM", customPages: "1-99" })
     ).rejects.toMatchObject({ status: 400 });
   });
 
   it("prices only the selected pages", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: 10, analysisStatus: "COMPLETED", orderId: null }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 10, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
     const order = await orders.createOrder({ ...baseInput, pageSelection: "CUSTOM", customPages: "1-4, 7" });
     expect(order.totalPages).toBe(5);
     expect(Number(order.totalAmount)).toBe(10);
@@ -173,7 +186,7 @@ describe("custom page selection", () => {
 
 describe("order numbers", () => {
   it("allocates a sequential number", async () => {
-    files = [{ id: "file-1", uploaderId: USER, pageCount: 1, analysisStatus: "COMPLETED", orderId: null }];
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 1, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
     const order = await orders.createOrder(baseInput);
     expect(order.orderNumber).toMatch(/^XE-\d{4}-\d{6}$/);
   });
