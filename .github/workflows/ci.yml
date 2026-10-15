@@ -37,8 +37,17 @@ jobs:
       - name: Schema/migration consistency (text pre-flight)
         run: npm run schema:check
 
+      # TEMPORARY (arena/PR#2 debugging): `tsc` writes only to the log, and logs are not
+      # retrievable through the API for a run owned by a different app. Echo each error as
+      # a workflow annotation so it is visible via `GET /check-runs`. Revert after use.
       - name: Typecheck
-        run: npm run typecheck
+        run: |
+          set +e
+          out=$(npx tsc --noEmit 2>&1); st=$?
+          set -e
+          printf '%s\n' "$out" | sed -E 's|^([^(/]+)\(([0-9]+),[0-9]+\): (error .*)$|::error file=\1,line=\2::\3|' | grep '::error' | head -30
+          echo "::error::tsc exited $st"
+          exit $st
 
       - name: Lint
         run: npm run lint
