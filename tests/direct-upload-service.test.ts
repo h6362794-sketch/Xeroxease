@@ -156,7 +156,7 @@ async function loadService() {
   }));
   vi.doMock("@/lib/constants", async () => {
     const real = await vi.importActual<typeof import("@/lib/constants")>("@/lib/constants");
-    return { ...real, MAX_FILES_PER_ORDER: 10, MAX_FILE_SIZE: 100 * MB };
+    return { ...real, MAX_FILES_PER_ORDER: 10, MAX_FILE_SIZE: 50 * MB };
   });
   db = fakeDb();
   audit = vi.fn(async () => undefined);
@@ -226,7 +226,7 @@ describe("createUploadIntent", () => {
     expect(res).toMatchObject({
       fileId: "file-1",
       method: "PUT",
-      maxBytes: 100 * MB,
+      maxBytes: 50 * MB,
       headers: {},
       proxyUploadAvailable: false,
       fileSizeLimitNote: null,
@@ -272,14 +272,14 @@ describe("createUploadIntent", () => {
   });
 
   it("refuses a size above a lower provider cap and explains the knob", async () => {
-    envOverrides.STORAGE_PROVIDER_MAX_FILE_BYTES = 50 * MB;
+    envOverrides.STORAGE_PROVIDER_MAX_FILE_BYTES = 40 * MB;
     await loadService();
-    const err = await expectError(service.createUploadIntent({ actor: student, filename: "a.pdf", declaredMime: "", declaredSizeRaw: 60 * MB }));
+    const err = await expectError(service.createUploadIntent({ actor: student, filename: "a.pdf", declaredMime: "", declaredSizeRaw: 45 * MB }));
     expect(err).toMatchObject({ status: 413, code: "PROVIDER_TOO_LARGE" });
     expect(err.message).toContain("STORAGE_PROVIDER_MAX_FILE_BYTES");
     // The capability advertises the lower number so the wizard can pre-flight it.
     const { describeUploadCapability } = await import("@/server/direct-upload/capability");
-    expect(describeUploadCapability().providerMaxBytes).toBe(50 * MB);
+    expect(describeUploadCapability().providerMaxBytes).toBe(40 * MB);
   });
 
   it("refuses unsupported types and nonsense sizes", async () => {

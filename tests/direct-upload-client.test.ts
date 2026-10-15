@@ -3,7 +3,7 @@
 // These tests pin the *client's judgement calls*: when to attempt a direct PUT, when to
 // fall back to the proxy route, and when to hand the file slot back. They are worth
 // pinning because each of those decisions is a user-visible failure mode if it drifts
-// (a dead drop zone, a re-uploaded 100 MB file, or a slot held by a dead intent).
+// (a dead drop zone, a re-uploaded 50 MB file, or a slot held by a dead intent).
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
@@ -44,7 +44,7 @@ async function rejection(promise: Promise<unknown>): Promise<ClientError> {
 
 describe("chooseUploadMode", () => {
   it("uses the direct path only when the deployment says it can", () => {
-    const on: UploadCapability = { enabled: true, maxBytes: 100 * MB, proxyUploadAvailable: false };
+    const on: UploadCapability = { enabled: true, maxBytes: 50 * MB, proxyUploadAvailable: false };
     expect(chooseUploadMode(on)).toBe("direct");
   });
 
@@ -123,7 +123,7 @@ describe("shouldReleaseIntentAfterFailure", () => {
   });
 
   it("keeps the intent live when a retry could reuse the bytes", () => {
-    // Releasing here would throw away a completed 100 MB transfer.
+    // Releasing here would throw away a completed 50 MB transfer.
     for (const code of ["STORAGE_UNAVAILABLE", "OBJECT_MISSING", "PERSIST_FAILED", "TIMEOUT", "ABORTED", "STORAGE_UNREACHABLE"]) {
       expect(shouldReleaseIntentAfterFailure({ code })).toBe(false);
     }
@@ -293,7 +293,7 @@ function intent(over: Partial<UploadIntent> = {}): UploadIntent {
     method: "PUT",
     headers: {},
     expiresAt: new Date(Date.now() + 600_000).toISOString(),
-    maxBytes: 100 * MB,
+    maxBytes: 50 * MB,
     proxyUploadAvailable: false,
     fileSizeLimitNote: null,
     ...over,
@@ -395,7 +395,7 @@ describe("uploadDocumentDirect", () => {
   it("propagates the intent failure and never contacts storage", async () => {
     const d = makeDeps({
       requestIntent: vi.fn(async () => {
-        throw Object.assign(new Error("File exceeds the 100 MB limit."), { status: 413, code: "TOO_LARGE" });
+        throw Object.assign(new Error("File exceeds the 50 MB limit."), { status: 413, code: "TOO_LARGE" });
       }),
     });
     const err = await rejection(run(uploadFile(), d));

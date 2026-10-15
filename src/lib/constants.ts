@@ -10,7 +10,7 @@ export const BRAND = {
 export const SESSION_COOKIE = "xe_session";
 export const CSRF_COOKIE = "xe_csrf";
 
-export const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB per file
+export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MiB (52,428,800 bytes) per file — Supabase Free-tier compatible
 export const MAX_FILES_PER_ORDER = 10;
 
 export const ALLOWED_UPLOAD_TYPES = ["pdf", "doc", "docx", "ppt", "pptx"] as const;

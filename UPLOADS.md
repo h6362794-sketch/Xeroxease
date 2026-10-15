@@ -9,7 +9,7 @@ platform checklist, `SECURITY.md` §4 the threat model.
 ## 1. Why the bytes bypass the application
 
 Vercel Functions cap the **request *and* response** body at 4.5 MB (infrastructure-level;
-`vercel.json` cannot raise it). XeroxEase accepts **100 MB** documents
+`vercel.json` cannot raise it). XeroxEase accepts **50 MiB** documents
 (`MAX_FILE_SIZE`, `src/lib/constants.ts`). Those two facts cannot coexist inside a
 function, so on Vercel:
 
@@ -66,7 +66,7 @@ whose `status = COMPLETED`**, i.e. verified against storage (`src/server/orders.
 | Which order | `orderId` is resolved against `orders.user_id = session user`; foreign/unknown → 404 |
 | Whose file | storage key and owner are **server-generated** (`buildStorageKey(sessionUser.id, …)`); the client never supplies a key or a user id |
 | Quota | at most `MAX_FILES_PER_ORDER` unattached, un-expired documents per user |
-| Size / type at request time | `decideUploadIntent()` — extension allow-list, double-extension rejection, declared-MIME↔extension agreement, `sizeBytes ≤ 100 MB` (inclusive), and ≤ the provider cap if lower |
+| Size / type at request time | `decideUploadIntent()` — extension allow-list, double-extension rejection, declared-MIME↔extension agreement, `sizeBytes ≤ 50 MiB` (inclusive), and ≤ the provider cap if lower |
 | Size / type after upload | `decideCompletion()` — measured size from storage, signature read back from stored bytes; **client metadata is never consulted** |
 | Replay / forgery | HMAC-SHA256 token keyed on `SESSION_SECRET`, bound to `(fileId, uploaderId, storageKey, sizeBytes, exp, nonce)`; the row keeps only `SHA-256(token)` and it is `UNIQUE`, so one token can never authorize two documents |
 | Expiry | both `claim.exp` and `uploaded_files.intent_expires_at` must still be in the future |
@@ -81,7 +81,7 @@ whose `status = COMPLETED`**, i.e. verified against storage (`src/server/orders.
 | Replayed token after re-issuing an intent | 403 — the row's stored hash no longer matches |
 | Intent expired | 410, object deleted, row `FAILED` |
 | Object missing at the expected key | 409 `OBJECT_MISSING`; retry by re-uploading |
-| Stored size > 100 MB | 413, object deleted, row `FAILED` |
+| Stored size > 50 MiB | 413, object deleted, row `FAILED` |
 | Stored size ≠ declared size | 422 `SIZE_MISMATCH`, object deleted (a truncated/gzip'd PUT), row `FAILED` |
 | Magic bytes don't match the extension | 422 `SIGNATURE_MISMATCH`, object deleted, row `FAILED` |
 | Storage outage during verification | 503 `STORAGE_UNAVAILABLE`; row stays **PENDING** with a live intent → a retry re-verifies the *same* object, no re-upload |
@@ -107,7 +107,7 @@ whose `status = COMPLETED`**, i.e. verified against storage (`src/server/orders.
    No `Vary` is emitted: a cached redirect would cache the credential itself.
 5. `STORAGE_BACKEND=local` → streamed response (never buffered), same cache discipline.
 6. Signing failure → 503 `DOWNLOAD_UNAVAILABLE`. It never falls back to proxying a
-   100 MB body, and provider error text is never forwarded.
+   50 MB body, and provider error text is never forwarded.
 
 `mode=view` (used by the admin "View file" link) requests inline display; the default is
 attachment. Supabase can only force `attachment` on a signed URL, so "view" means "let
@@ -125,17 +125,15 @@ Required, on the Supabase project that backs the deployment:
 * **One private bucket** named `STORAGE_BUCKET` (default `documents`), *public access
   off*. The app never uses public object URLs; nothing here creates a bucket.
 * No permissive storage policies/RLS: the app acts with the service-role key server-side.
-* **Global file-size limit ≥ 100 MB.** This is the hard gate:
-  | Plan | Max per-file upload | 100 MB supported? |
+* **Global file-size limit ≥ 50 MiB.** This is the hard gate:
+  | Plan | Max per-file upload | 50 MiB supported? |
   |---|---|---|
-  | Supabase **Free** | 50 MB (not raisable) | **No** |
+  | Supabase **Free** | 50 MB (not raisable) | **Yes** |
   | Supabase **Pro** and up | up to 500 GB | Yes |
-  So a $0/month staging project **cannot store a 100 MB document** even though the
-  application accepts it. If the provider cap is below the app limit, set
-  `STORAGE_PROVIDER_MAX_FILE_BYTES` to it (Free tier: `52428800`) — oversized uploads
-  are then refused at intent time with an actionable message instead of failing mid-PUT
-  with a provider error. Do not "fix" the mismatch by lowering the app limit: the
-  requirement is 100 MB, and `MAX_FILE_SIZE` plus its tests are the source of truth.
+  The application's 50 MiB limit matches the Free-tier cap. Set
+  `STORAGE_PROVIDER_MAX_FILE_BYTES=52428800` for Free-tier deployments so oversized
+  uploads are refused at intent time with an actionable message instead of failing
+  mid-PUT with a provider error. `MAX_FILE_SIZE` plus its tests are the source of truth.
 * Optional per-bucket MIME allow-list (`application/pdf`,
   `application/msword`, `application/vnd.openxmlformats-officedocument.*`,
   `application/vnd.ms-powerpoint`, `application/octet-stream`) — defence in depth only;
@@ -168,7 +166,7 @@ Required, on the Supabase project that backs the deployment:
 
 * **Single PUT, no chunking.** Supabase signed upload URLs are not multipart and are
   fixed to a 2-hour lifetime server-side (our own `UPLOAD_INTENT_TTL_SECONDS` is the
-  tighter bound). A 100 MB PUT is therefore one request: no pause, and a network drop
+  tighter bound). A 50 MB PUT is therefore one request: no pause, and a network drop
   means restarting that file.
 * **TUS/resumable is deliberately not used.** Supabase's documented
   "signed TUS" flow (`x-signature` with the createSignedUploadUrl token) has been
@@ -211,7 +209,7 @@ exists, is private, or has its file-size limit raised; that stays a checklist it
 
 ## 8. Verification status (honest scope)
 
-Covered by `npm test`: the token/format/expiry rules, size boundary at exactly 100 MB,
+Covered by `npm test`: the token/format/expiry rules, size boundary at exactly 50 MiB,
 type/signature rejections, cross-user access attempts, verification outcomes
 (missing/oversized/size-mismatched/bad-signature), idempotent completion, outage
 behaviour, orphan reaping, download authorization, and that signed URLs never appear in

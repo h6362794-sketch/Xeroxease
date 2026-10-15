@@ -18,7 +18,7 @@ Security is a first-class requirement, prioritized above visual effects and conv
 | Session hijacking | 256-bit random tokens, stored only as SHA-256 hashes, HTTP-only + SameSite + Secure (prod) cookies, server-side expiry/revocation, revocation on password reset and account disable |
 | Brute force / credential stuffing | Rate limiting + lockout + audit logging of failures |
 | Rate abuse | Per-endpoint sliding-window limits (login, register, upload, analyze, payment, feedback, admin, public, **reset**) with an optional **shared Redis store** (`RATE_LIMIT_STORAGE=redis`) because an in-memory limiter does not protect multi-instance deployments. Store outages **fail closed** unless `RATE_LIMIT_FAIL_OPEN=true` |
-| File upload attacks | Extension allow-list, MIME validation, magic-byte signature checks, double-extension rejection, filename sanitization, path-traversal-safe storage keys (server-generated), declared `Content-Length` checked **before** parsing plus an authoritative check on the received bytes, one-file-per-request, 100 MB cap, orphaned objects cleaned up if the database write fails, private storage |
+| File upload attacks | Extension allow-list, MIME validation, magic-byte signature checks, double-extension rejection, filename sanitization, path-traversal-safe storage keys (server-generated), declared `Content-Length` checked **before** parsing plus an authoritative check on the received bytes, one-file-per-request, 50 MiB cap, orphaned objects cleaned up if the database write fails, private storage |
 | Path traversal | Storage keys generated server-side (UUID + random hex); `storagePath()` resolves and validates against base directory |
 | MIME spoofing | Magic-byte validation catches renamed executables (tested) |
 | Clickjacking | `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` |
@@ -68,7 +68,7 @@ on Vercel), which is why it is not the production path for documents.
 
 ### 4.2 Direct upload (production, `STORAGE_BACKEND=supabase`)
 
-Because a function host cannot carry a 100 MB body, the browser writes to storage itself
+Because a function host cannot carry a 50 MB body, the browser writes to storage itself
 under an authorization the server mints. The security property that replaces "we saw the
 bytes" is "**we re-read the object afterwards and it matches what we authorized**":
 
@@ -422,7 +422,7 @@ cannot weaken production. Reintroducing the old file location fails 6 of its 7 t
 
 ## 14. Change record — direct-to-private-storage uploads (2026-10-15)
 
-**Why.** `MAX_FILE_SIZE` is 100 MB with up to 10 files per order (`src/lib/constants.ts`),
+**Why.** `MAX_FILE_SIZE` is 50 MiB (52,428,800 bytes) with up to 10 files per order (`src/lib/constants.ts`),
 but the proxy route has to carry those bytes through the application. On a function host
 (Vercel: **4.5 MB request body and 4.5 MB response body**) that is not a tuning problem —
 it is unbuildable. §11.1 item 6 recorded this as an operator's problem; it is now a code

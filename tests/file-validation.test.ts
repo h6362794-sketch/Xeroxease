@@ -82,8 +82,8 @@ describe("validateUpload", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("rejects oversized file (>100MB)", () => {
-    const r = validateUpload("huge.pdf", "application/pdf", 101 * 1024 * 1024, PDF_MAGIC);
+  it("rejects oversized file (>50MiB)", () => {
+    const r = validateUpload("huge.pdf", "application/pdf", 51 * 1024 * 1024, PDF_MAGIC);
     expect(r.ok).toBe(false);
   });
 

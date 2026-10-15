@@ -447,7 +447,7 @@ export async function deleteFile(storageKey: string): Promise<void> {
 
 /**
  * Read only the first `bytes` of an object. Previously the Supabase path downloaded
- * the entire file (up to 100 MB) just to inspect a 16-byte signature.
+ * the entire file (up to 50 MB) just to inspect a 16-byte signature.
  */
 export async function readHeader(storageKey: string, bytes = 16): Promise<Buffer> {
   assertBackend();

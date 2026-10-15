@@ -125,10 +125,10 @@ if (production) {
     );
     const directEnabled = (value("DIRECT_UPLOADS_ENABLED") || "true").toLowerCase() !== "false";
     add(
-      "direct uploads available (100 MB documents)",
+      "direct uploads available (50 MB documents)",
       "required",
       directEnabled,
-      "DIRECT_UPLOADS_ENABLED=false on a function host (Vercel) means a 100 MB upload has no " +
+      "DIRECT_UPLOADS_ENABLED=false on a function host (Vercel) means a 50 MB upload has no " +
         "working path — the proxy route is bounded by the platform's request-body limit. " +
         "Only disable it on a host with no body cap."
     );
@@ -136,14 +136,14 @@ if (production) {
   if (backend === "local") {
     add(
       "local storage cannot do direct uploads",
-      // Required: with direct uploads unavailable, a 100 MB document has no working
+      // Required: with direct uploads unavailable, a 50 MB document has no working
       // path at all on a platform with a request-body cap, so this must not pass
       // quietly just because the app boots.
       "required",
       false,
       'STORAGE_BACKEND=local has no browser-usable storage credential, so /api/uploads/intent returns 501 ' +
         "and uploads fall back to the proxy route (bounded by the platform's request-body limit). " +
-        "Acceptable for development only; use supabase for 100 MB documents."
+        "Acceptable for development only; use supabase for 50 MB documents."
     );
   }
   const intentTtl = Number(value("UPLOAD_INTENT_TTL_SECONDS") || "600");
@@ -151,7 +151,7 @@ if (production) {
     "UPLOAD_INTENT_TTL_SECONDS in 60..3600",
     "required",
     Number.isFinite(intentTtl) && intentTtl >= 60 && intentTtl <= 3600,
-    "Bounds how long an abandoned upload may sit in the bucket. 600 s suits a 100 MB transfer."
+    "Bounds how long an abandoned upload may sit in the bucket. 600 s suits a 50 MB transfer."
   );
   const signedTtl = Number(value("SIGNED_DOWNLOAD_URL_TTL_SECONDS") || "60");
   add(
@@ -166,8 +166,8 @@ if (production) {
     "STORAGE_PROVIDER_MAX_FILE_BYTES is 0 or >= 1 MB",
     "required",
     Number.isFinite(providerCap) && (providerCap === 0 || providerCap >= 1048576),
-    "0 (or unset) means the application limit binds. Set it to the provider's own per-file " +
-      "cap (Supabase Free: 52428800 = 50 MB) so oversized files are refused before the " +
+    "0 (or unset) means the application limit (50 MiB) binds. For Supabase Free-tier " +
+      "deployments, set it to 52428800 (50 MB) so oversized files are refused before the " +
       "browser wastes the transfer."
   );
 

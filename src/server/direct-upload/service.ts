@@ -198,7 +198,7 @@ export async function createUploadIntent(params: {
     proxyUploadAvailable: false,
     fileSizeLimitNote:
       providerCap > 0 && providerCap < MAX_FILE_SIZE
-        ? `The storage provider's configured per-file limit is ${Math.floor(providerCap / (1024 * 1024))} MB, below the application's 100 MB.`
+        ? `The storage provider's configured per-file limit is ${Math.floor(providerCap / (1024 * 1024))} MB, below the application's ${Math.floor(MAX_FILE_SIZE / (1024 * 1024))} MB.`
         : null,
   };
 }

@@ -22,7 +22,7 @@ import { createSignedDownloadUrl } from "@/server/direct-upload/storage-bridge";
  *
  *  * `supabase` (production / Vercel) → 307 redirect to a short-lived, object-specific
  *    signed URL. The bytes travel browser ↔ storage, never through a function body,
- *    so a 100 MB document works and the function stays O(1) in memory.
+ *    so a 50 MB document works and the function stays O(1) in memory.
  *  * `local` (development) → streamed response, because the local backend cannot hand
  *    the browser any credential. Streaming rather than buffering also keeps the
  *    download route honest about the size ceiling it is meant to remove.

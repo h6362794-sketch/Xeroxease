@@ -10,7 +10,7 @@ Built with Next.js 15, React 19, TypeScript (strict), Tailwind CSS, Framer Motio
 
 ### Students
 - **Register / login** with email or registration number; **email-free password recovery** via a single-use 160-bit recovery code you generate yourself (no mail provider, no paid service)
-- **Multi-step order wizard**: drag-and-drop upload (PDF/DOC/DOCX/PPT/PPTX, **100 MB/file**, direct to private storage — see [`UPLOADS.md`](UPLOADS.md)), server-side page detection, print configuration (A4/Legal, colour required, sides, copies, custom page ranges), finishing (staple/spiral/stick file), review, QR payment, confirmation
+- **Multi-step order wizard**: drag-and-drop upload (PDF/DOC/DOCX/PPT/PPTX, **50 MB/file**, direct to private storage — see [`UPLOADS.md`](UPLOADS.md)), server-side page detection, print configuration (A4/Legal, colour required, sides, copies, custom page ranges), finishing (staple/spiral/stick file), review, QR payment, confirmation
 - **Server-verified page counts** — pricing is always computed on the server from parsed documents
 - **QR payment workflow**: scan the desk's UPI QR, submit the transaction reference, admin verifies
 - **Live order tracking** with an animated status timeline and polling updates
