@@ -24,7 +24,31 @@ From zero to running with a **fresh Supabase project**. No source-code edits req
 In the Supabase dashboard: **Project Settings → Database → Connection string → URI**
 
 - **Direct connection** (port `5432`) — used for migrations. Also set as `DIRECT_URL`.
-- **Connection pooler** (port `6543`, pgbouncer) — recommended for `DATABASE_URL`on serverless deployments. Append `?pgbouncer=true&connection_limit=1`.
+- **Connection pooler** (port `6543`, transaction mode) — recommended for `DATABASE_URL` on serverless deployments.
+
+**Do not blindly append `?pgbouncer=true&connection_limit=1`.** That was
+the old guidance and it is wrong for current Prisma (the project pins
+`^6.5.0`):
+
+- Prisma uses prepared statements. Current Supabase poolers
+  (Supavisor / PgBouncer ≥ 1.21 with `max_prepared_statements > 0`)
+  support them natively, so **no extra parameter is needed** — the
+  pooler URL works as-is.
+- `pgbouncer=true` is only required for poolers that predate
+  PgBouncer 1.21. On a modern pooler it is not just unnecessary but
+  can itself cause `prepared statement "PGBOUNCER_…" does not exist`
+  (prisma/prisma#21799).
+- `connection_limit=1` serialises every query through this app's
+  singleton Prisma client. It only made sense for per-request
+  serverless clients; leave it off unless your platform imposes it.
+
+If you see `prepared statement "…" does not exist` (SQLSTATE 26000):
+check which of the two situations above you are in, then either add
+`?pgbouncer=true` (old poolers) or remove it and let the pooler track
+statements (modern poolers) — or switch `DATABASE_URL` to the session
+pooler / direct connection (port `5432`). `npm run config:check`
+prints sanitised diagnostics for exactly this (never the URL itself).
+Migrations always run against `DIRECT_URL`, never the pooler.
 
 You also need:
 
@@ -147,6 +171,7 @@ npm run build && npm start   # production
 | Problem | Fix |
 |---|---|
 | `P1001: can't reach database` | Check the connection string; if using the pooler for migrations, use the direct URL for `DIRECT_URL` |
+| `prepared statement "…" does not exist` (SQLSTATE 26000) | Pooler/prepared-statement mismatch — see §3. Modern Supabase poolers need **no** `pgbouncer` flag; only pre-1.21 PgBouncer needs `?pgbouncer=true`. Migrations must use `DIRECT_URL` (port 5432) |
 | `P1012` schema validation | Ensure both `DATABASE_URL` and `DIRECT_URL` are set |
 | `Missing required environment variable: SESSION_SECRET` | Add `SESSION_SECRET` to `.env.local` |
 | Upload fails with 500 | Ensure `LOCAL_STORAGE_DIR` is writable by the server process |

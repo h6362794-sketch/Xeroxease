@@ -40,16 +40,31 @@ The seed is idempotent: pricing and users upsert, demo orders are created only w
 These passwords are **published in the repository for development convenience only**.
 
 - Never reuse them in staging/production.
-- `npm run db:seed` **refuses** to create accounts with these defaults whenever `NODE_ENV=production`, unless you explicitly set `ALLOW_DEV_SEED=true`.
+- `npm run db:seed` **refuses to run** in production (`NODE_ENV=production`) unless
+  every account password comes from the environment:
+  - `SEED_ADMIN_PASSWORD` is **mandatory in production** — there is no fallback,
+    generated or default. A privileged account must never be created with a
+    publicly documented password, nor with a random password nobody can learn
+    (that would lock the operator out of a fresh deployment, because recovery
+    codes are self-generated in the profile). The recommended production path is
+    to create the first admin through the Super Admin console instead of seeding.
+  - `SEED_STUDENT_PASSWORD` is likewise required in production unless
+    `ALLOW_DEV_SEED=true` is set explicitly.
+  - Supplied passwords must be ≥ 12 characters with upper, lower and a digit —
+    the published defaults (`Student@123`, `Admin@123`) are rejected when
+    supplied explicitly, even in development.
 - Supply your own values instead:
   ```bash
-  SEED_STUDENT_PASSWORD="<strong unique value>" \
+  SEED_STUDENT_PASSWORD="<strong unique value, 12+ chars>" \
   SEED_ADMIN_PASSWORD="<strong unique value, 12+ chars>" \
   npm run db:seed
   ```
-  With `NODE_ENV=production` and no `SEED_ADMIN_PASSWORD`, the seed generates a random
-  admin password and **does not print it** — recover access via the forgot-password
-  flow or create the admin through the Super Admin console.
-- The seed prints **account identifiers only**. Passwords are never written to logs or stdout.
+- The seed prints **account identifiers and password provenance only**.
+  Passwords and hashes are never written to logs or stdout.
+- **Reseeding never changes credentials**: user upserts carry an empty
+  `update` clause, so an existing account keeps its current password hash,
+  active state and all other fields. The seed also never deletes or
+  disables accounts. Rotate credentials through the Super Admin console
+  (Admin → Users) or the recovery-code flow (Profile → Security).
 - Demo orders are skipped entirely in production.
 - Production must always use unique, strong credentials — see DEPLOYMENT.md checklist.

@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { createSession, verifyPassword } from "@/server/auth";
+import { createSession, recordFailedLogin, verifyPassword } from "@/server/auth";
 import { adminLoginSchema } from "@/server/validation";
 import { apiError, enforceRateLimit, json, parseBody, withErrorHandling, getClientIp } from "@/server/api-utils";
 import { RATE_LIMITS } from "@/server/rate-limit";
@@ -34,14 +34,7 @@ export async function POST(req: Request) {
 
     const ok = await verifyPassword(data.password, user.passwordHash);
     if (!ok) {
-      const failedLoginCount = user.failedLoginCount + 1;
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          failedLoginCount,
-          lockedUntil: failedLoginCount >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null,
-        },
-      });
+      await recordFailedLogin(user.id, { maxFailed: MAX_FAILED, lockMinutes: LOCK_MINUTES });
       await audit({ actorId: user.id, action: "ADMIN_LOGIN_FAILED", targetType: "USER", targetId: user.id, ip });
       return genericFailure;
     }

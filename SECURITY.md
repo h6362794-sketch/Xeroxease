@@ -46,6 +46,8 @@ Security is a first-class requirement, prioritized above visual effects and conv
 - **Admin-assisted recovery fallback**: for a user with no code, a Super Admin can issue a single-use 24 h code from **Admin → Users** after verifying identity in person. It is audited with a mandatory free-text reason, never reveals or sets a password, and never signs anyone in.
 - **No email or SMS in the recovery path.** The app sends no mail at all; there is no `EMAIL_*`/SMTP/SMS configuration and no paid third-party recovery dependency.
 - **Admin auth**: separate login endpoint + page (`/admin/login`), stricter lockout, dedicated audit events. **No public admin signup exists anywhere**; admins are provisioned only by Super Admin through the admin console.
+- **Registration**: creates the account only — **no session is issued**, so the user must sign in afterwards (the login page says so explicitly). Email, phone and registration number are unique, enforced by the database, and a concurrent duplicate (the preflight/insert race) is answered with the same 409 the preflight returns — never a raw database error.
+- **Email verification is not implemented** (and there is no mail transport to implement it with). `users.email_verified` exists for future use; seeded demo accounts are the only rows with it set. Security consequence, stated plainly: email is an identifier, not an authentication factor — it plays no part in login, recovery-code issuance or redemption, so an unverified address cannot be used to take over or recover an account. The unique constraints on email/phone/registration number also prevent registering *as* an existing user. If verified contact channels ever become a requirement, that is a product decision needing a mail provider, not a code tweak.
 
 ## 3. Authorization model
 
@@ -183,6 +185,7 @@ checklist** (things the code cannot enforce); 11.2 is what is simply not built y
 10. **Backups and retention** are the operator's responsibility. Never run `prisma migrate reset` or `prisma db push --force-reset` against production data.
 11. **CSRF** relies on `SameSite=Lax` cookies plus JSON-only state-changing endpoints. If a future endpoint accepts cross-origin form posts or `text/plain` bodies, add an explicit CSRF token. Note that the direct-upload PUT is *deliberately* cross-origin and is authorized by the provider's signed URL, not by the session cookie.
 12. **Dependency auditing**: run `npm audit` regularly and keep dependencies patched.
+13. **The database URL must match the pooler in front of it.** Prisma uses prepared statements. A transaction-mode pooler (Supabase port 6543) either supports named prepared statements (Supavisor / PgBouncer ≥ 1.21 — no URL flag needed) or requires `?pgbouncer=true` (pre-1.21 only; on a modern pooler the flag itself can cause `prepared statement "PGBOUNCER_…" does not exist`, prisma/prisma#21799). Getting this wrong surfaces as SQLSTATE 26000. The app validates and diagnoses the URL at startup and in `npm run config:check` — with the URL itself never printed — but choosing the right pooler mode is an operator decision; see SETUP.md §3.
 
 ### 11.2 Not implemented (do not assume otherwise)
 
