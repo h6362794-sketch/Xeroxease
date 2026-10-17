@@ -19,8 +19,18 @@ async function getArgon2() {
   try {
     const mod = await import("argon2");
     argon2Module = mod.default ?? (mod as unknown as typeof import("argon2"));
-  } catch {
+  } catch (err) {
     argon2Module = null;
+    // New hashes still use the bcrypt fallback, but existing argon2id
+    // hashes can no longer be verified, which surfaces as a generic
+    // "Invalid credentials" for every affected user. Make the
+    // operator-visible cause explicit once per process.
+    console.warn(
+      "[auth] argon2 failed to load; falling back to bcrypt for NEW hashes. " +
+        "Existing argon2id hashes cannot be verified until argon2 loads " +
+        "correctly. Cause: " +
+        (err instanceof Error ? err.message : String(err))
+    );
   }
   return argon2Module;
 }
@@ -133,6 +143,35 @@ export async function destroySession(): Promise<void> {
     });
   }
   store.delete(SESSION_COOKIE);
+}
+
+/**
+ * Record a failed login attempt.
+ *
+ * The counter increment is atomic. A read-then-write pattern loses
+ * updates when several wrong-password requests race: each reads the
+ * same count and writes the same incremented value, undercounting
+ * attempts and delaying the lockout. The lock itself is applied by a
+ * conditional update that only matches once the counter reaches the
+ * threshold, so concurrent failures cannot skip the lockout either.
+ */
+export async function recordFailedLogin(
+  userId: string,
+  opts: { maxFailed: number; lockMinutes: number }
+): Promise<void> {
+  const locked = await prisma.user.updateMany({
+    where: { id: userId, failedLoginCount: { gte: opts.maxFailed - 1 } },
+    data: {
+      failedLoginCount: { increment: 1 },
+      lockedUntil: new Date(Date.now() + opts.lockMinutes * 60_000),
+    },
+  });
+  if (locked.count === 0) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { failedLoginCount: { increment: 1 } },
+    });
+  }
 }
 
 export async function requireUser(): Promise<SessionUser> {
