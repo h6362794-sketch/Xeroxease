@@ -128,8 +128,14 @@ export function diagnoseDatabaseConfig(input: DatabaseConfigInput): DatabaseConf
   }
   const info = parsed.info;
 
+  // Case-insensitive, restoring the behaviour of the check this module
+  // replaced (the old scripts/check-env.ts matched placeholders with a
+  // /i regex). Only these exact marker strings are matched — a real
+  // credential that merely resembles a word (e.g. "yourPass123") is
+  // never rejected.
+  const databaseUrlUpper = databaseUrl.toUpperCase();
   for (const marker of PLACEHOLDER_MARKERS) {
-    if (databaseUrl.includes(marker)) {
+    if (databaseUrlUpper.includes(marker)) {
       errors.push(`DATABASE_URL still contains the placeholder "${marker}". Replace it with real values.`);
       break;
     }

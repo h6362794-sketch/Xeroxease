@@ -90,6 +90,39 @@ describe("diagnoseDatabaseConfig", () => {
     expect(d.errors.some((e) => e.includes("placeholder"))).toBe(true);
   });
 
+  it("detects placeholders regardless of casing (regression: the old check-env matched case-insensitively)", () => {
+    const mixedCase = [
+      "your_password",
+      "Your_Password",
+      "your_project_ref",
+      "Your_Project_Ref",
+      "changeme",
+      "ChangeMe",
+      "replace_me",
+      "Replace_Me",
+    ];
+    for (const password of mixedCase) {
+      const d = diagnoseDatabaseConfig({
+        databaseUrl: `postgresql://postgres:${password}@db.X.supabase.co:5432/postgres`,
+        directUrl: DIRECT,
+      });
+      expect(d.errors.some((e) => e.includes("placeholder"))).toBe(true);
+    }
+  });
+
+  it("accepts real credentials that merely resemble placeholders, including URL-encoded ones", () => {
+    // None of these contain a marker even when case-folded: digits,
+    // different words, and percent-encoding must all pass through.
+    const realPasswords = ["yourPass123", "y0ur_p4ssw0rd", "p%40ssw0rd%3A1", "Chang3Me!2026"];
+    for (const password of realPasswords) {
+      const d = diagnoseDatabaseConfig({
+        databaseUrl: `postgresql://postgres:${password}@db.X.supabase.co:5432/postgres`,
+        directUrl: DIRECT,
+      });
+      expect(d.errors).toEqual([]);
+    }
+  });
+
   it("warns on the transaction-mode pooler without pgbouncer=true", () => {
     const d = diagnoseDatabaseConfig({ databaseUrl: POOLED, directUrl: DIRECT });
     expect(d.errors).toEqual([]);
