@@ -13,7 +13,7 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 
 | Method | Path | Auth | Body | Notes |
 |---|---|---|---|---|
-| POST | `/auth/register` | — | name, email, phone, regNo, branch, section, year, password, confirmPassword | Creates STUDENT only. 409 on duplicate email/phone/regNo. |
+| POST | `/auth/register` | — | name, email, phone, regNo, branch, section, year, password, confirmPassword | Creates STUDENT only, **no session** (sign in afterwards). 409 on duplicate email/phone/regNo — both from the preflight check and from the insert-time unique-constraint race (Prisma `P2002`), never a 500. |
 | POST | `/auth/login` | — | identifier (email **or** regNo), password | Students only; admins rejected. Lockout after 8 failures. |
 | POST | `/auth/admin-login` | — | email, password | ADMIN/SUPER_ADMIN only. Lockout after 5 failures. Audited. |
 | POST | `/auth/logout` | session | — | Revokes session, clears cookie. |

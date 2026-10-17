@@ -11,6 +11,7 @@
 
 import { existsSync } from "fs";
 import path from "path";
+import { diagnoseDatabaseConfig } from "../src/server/db-config";
 
 type Severity = "required" | "recommended";
 
@@ -61,15 +62,20 @@ function add(name: string, severity: Severity, ok: boolean, hint: string) {
 
 const dbUrl = value("DATABASE_URL");
 add("DATABASE_URL", "required", dbUrl.length > 0, "PostgreSQL connection string (pooler for serverless).");
-if (dbUrl) {
-  const looksPostgres = /^postgres(ql)?:\/\//i.test(dbUrl);
-  add("DATABASE_URL scheme", "required", looksPostgres, "Must start with postgresql:// (or postgres://).");
-  add(
-    "DATABASE_URL has no placeholder password",
-    "required",
-    !/YOUR_PASSWORD|YOUR_PROJECT_REF/i.test(dbUrl),
-    "Replace the placeholder values copied from .env.example."
-  );
+
+// Shared, sanitised connection-string diagnostics (scheme, placeholders,
+// pooler port vs pgbouncer flag, connection_limit, DIRECT_URL). The
+// messages never contain the URL or any credential.
+const dbDiag = diagnoseDatabaseConfig({
+  databaseUrl: dbUrl,
+  directUrl: value("DIRECT_URL"),
+  nodeEnv: process.env.NODE_ENV,
+});
+for (const err of dbDiag.errors) {
+  add(err, "required", false, "See the message; fix the variable it names.");
+}
+for (const warn of dbDiag.warnings) {
+  add(warn, "recommended", false, "Review whether it applies to this deployment.");
 }
 
 const secret = value("SESSION_SECRET");

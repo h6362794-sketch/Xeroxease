@@ -21,6 +21,13 @@ export default function LoginPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("reset") === "1") {
       setNotice("Password reset. Sign in with your new password, then generate a fresh recovery code.");
+    } else if (params.get("registered") === "1") {
+      // Registration does not create a session, so this must read as an
+      // invitation to sign in — never as if the user were already logged in.
+      setNotice(
+        "Account created. Sign in with the email and password you just chose. " +
+          "After your first sign-in, open Profile → Security to generate your recovery code."
+      );
     }
   }, []);
 
@@ -45,7 +52,11 @@ export default function LoginPage() {
       <p className="text-sm text-zinc-400 mt-1.5 mb-8">Sign in to your XeroxEase account.</p>
 
       {notice && (
-        <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-sm text-emerald-200">
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-sm text-emerald-200"
+        >
           {notice}
         </div>
       )}

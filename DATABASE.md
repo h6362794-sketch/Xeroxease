@@ -88,6 +88,19 @@ Prisma migrations are forward-only. To reverse a change, write and commit a **ne
 
 Connection config uses `DATABASE_URL` (runtime, pooler-friendly) and `DIRECT_URL` (migrations) — see `.env.example`.
 
+**Pooler note (Prisma ≥ 6):** Prisma uses prepared statements.
+Current Supabase poolers (Supavisor / PgBouncer ≥ 1.21 with
+`max_prepared_statements > 0`) pool named prepared statements
+correctly, so the transaction-mode pooler URL (port 6543) works
+**without any extra query parameter**. Only pre-1.21 poolers need
+`?pgbouncer=true`; on a modern pooler that flag is unnecessary and
+can itself cause `prepared statement "PGBOUNCER_…" does not exist`
+(prisma/prisma#21799). Never put `pgbouncer=true` on `DIRECT_URL`:
+migrations use advisory locks and need a direct/session connection.
+`src/server/db-config.ts` validates both URLs at startup and in
+`npm run config:check`, printing sanitised warnings (never the URL
+or password) when the configuration is ambiguous or unsafe.
+
 ## Backups & recovery
 
 - **Supabase built-in backups**: daily backups on paid plans; verify under *Database → Backups*. For free tier, schedule `pg_dump` externally (see DEPLOYMENT.md).

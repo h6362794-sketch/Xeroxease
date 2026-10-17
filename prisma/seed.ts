@@ -2,15 +2,21 @@
  * Run: npm run db:seed
  *
  * SAFETY: this script creates accounts with well-known passwords for local
- * convenience. It refuses to run those defaults against a production database.
- * Provision real administrators with npm run db:seed only after setting
- * SEED_STUDENT_PASSWORD / SEED_ADMIN_PASSWORD (or create them through the Super
- * Admin console, which is the recommended path in production).
+ * convenience. It refuses to create privileged accounts in production
+ * without an operator-supplied strong password (SEED_ADMIN_PASSWORD), and
+ * refuses the documented development defaults in production unless
+ * ALLOW_DEV_SEED=true is set explicitly. Credential policy lives in
+ * prisma/seed-config.ts.
+ *
+ * The seed is non-destructive: users are upserted with an empty `update`
+ * clause, so re-running it never reassigns a password, disables or
+ * deletes an existing account. Rotate credentials through the
+ * Super Admin console or the recovery-code flow instead.
  */
 import { PrismaClient } from "@prisma/client";
 import argon2 from "argon2";
-import { randomBytes } from "crypto";
 import dotenv from "dotenv";
+import { resolveSeedPasswords } from "./seed-config";
 
 // `tsx prisma/seed.ts` reads no env file on its own, so `npm run db:seed` used
 // to fail with "Environment variable not found: DATABASE_URL" unless the shell
@@ -21,60 +27,18 @@ dotenv.config({ path: ".env" });
 
 const prisma = new PrismaClient();
 
-const isProduction = process.env.NODE_ENV === "production";
-const allowDevSeed = process.env.ALLOW_DEV_SEED === "true";
-
-// Documented development fallbacks. Never used in production unless explicitly
-// overridden by an operator via ALLOW_DEV_SEED=true.
-const DEFAULT_DEV_STUDENT_PASSWORD = "Student@123";
-const DEFAULT_DEV_ADMIN_PASSWORD = "Admin@123";
-
-function resolvePassword(envVar: string, devDefault: string, label: string): string {
-  const fromEnv = process.env[envVar];
-  if (fromEnv) return fromEnv;
-
-  if (isProduction && !allowDevSeed) {
-    throw new Error(
-      `Refusing to seed ${label} with the default development password. Set ${envVar} to a strong unique value, ` +
-        `or set ALLOW_DEV_SEED=true only if you fully understand that these accounts will be publicly guessable.`
-    );
-  }
-  if (isProduction) {
-    console.warn(`[seed] WARNING: using the default development password for ${label}. Rotate it immediately.`);
-  }
-  return devDefault;
-}
-
-function assertStrongEnough(value: string, label: string): void {
-  if (value.length < 12) {
-    throw new Error(
-      `${label} must be at least 12 characters. Generate one with: openssl rand -base64 24`
-    );
-  }
-}
-
 async function main() {
   console.log("Seeding XeroxEase development data…");
 
-  // Prefer operator-supplied credentials; fall back to documented dev values only
-  // outside production (or with an explicit override).
-  const seedStudentPassword = resolvePassword(
-    "SEED_STUDENT_PASSWORD",
-    DEFAULT_DEV_STUDENT_PASSWORD,
-    "student accounts"
-  );
-  let seedAdminPassword = resolvePassword("SEED_ADMIN_PASSWORD", DEFAULT_DEV_ADMIN_PASSWORD, "admin accounts");
-
-  if (process.env.SEED_ADMIN_PASSWORD) {
-    assertStrongEnough(seedAdminPassword, "SEED_ADMIN_PASSWORD");
-  } else if (isProduction) {
-    // Never invent a production admin password silently and never print it.
-    seedAdminPassword = randomBytes(24).toString("base64url");
-    console.log(
-      "[seed] No SEED_ADMIN_PASSWORD provided. A random Super Admin password was generated and is NOT printed.\n" +
-        "[seed] Use the forgot-password flow, or update the account through the Super Admin console."
-    );
-  }
+  // Fail closed with an actionable, secret-free message when the
+  // configuration would create an unsafe account (see seed-config.ts).
+  const { studentPassword, adminPassword, studentSource, adminSource } =
+    resolveSeedPasswords({
+      nodeEnv: process.env.NODE_ENV ?? "",
+      seedStudentPassword: process.env.SEED_STUDENT_PASSWORD,
+      seedAdminPassword: process.env.SEED_ADMIN_PASSWORD,
+      allowDevSeed: process.env.ALLOW_DEV_SEED === "true",
+    });
 
   // ---------- Pricing ----------
   const pricing = [
@@ -91,8 +55,13 @@ async function main() {
   }
 
   // ---------- Users ----------
-  const studentHash = await argon2.hash(seedStudentPassword, { type: argon2.argon2id });
-  const adminHash = await argon2.hash(seedAdminPassword, { type: argon2.argon2id });
+  // Passwords are resolved (and strength-checked) before any hash is
+  // computed, so a rejected configuration never writes a half-seeded
+  // database. Hashes are computed fresh on every run but only applied
+  // to accounts that do not exist yet — the upsert `update: {}` clause
+  // below means reseeding never overwrites an existing password hash.
+  const studentHash = await argon2.hash(studentPassword, { type: argon2.argon2id });
+  const adminHash = await argon2.hash(adminPassword, { type: argon2.argon2id });
 
   const student = await prisma.user.upsert({
     where: { emailNorm: "student@college.edu" },
@@ -176,6 +145,8 @@ async function main() {
   });
 
   // ---------- Demo orders ----------
+  const isProduction = (process.env.NODE_ENV ?? "") === "production";
+  const allowDevSeed = process.env.ALLOW_DEV_SEED === "true";
   const existing = await prisma.order.count();
   if (existing === 0 && !(isProduction && !allowDevSeed)) {
     const o1 = await prisma.order.create({
@@ -238,17 +209,24 @@ async function main() {
     console.log("Created demo orders XE-2026-000001, XE-2026-000002");
   }
 
-  // Account identifiers only — passwords are never written to logs or stdout.
+  // Account identifiers and password provenance only — passwords and
+  // hashes are never written to logs or stdout.
   console.log("\n--- Seeded accounts ---");
   console.log(`Student     : ${process.env.SEED_STUDENT_EMAIL || "student@college.edu"}`);
   console.log(`Student 2   : student2@college.edu`);
   console.log(`Admin       : ${process.env.SEED_ADMIN_EMAIL || "admin@xeroxease.local"}`);
   console.log(`Super Admin : superadmin@xeroxease.local`);
   console.log(
-    process.env.SEED_STUDENT_PASSWORD || process.env.SEED_ADMIN_PASSWORD
-      ? "Passwords were supplied via environment variables (not printed)."
-      : `Development passwords are documented in SEED.md. Rotate them in any non-dev environment.`
+    `Student password source: ${studentSource === "env" ? "SEED_STUDENT_PASSWORD (value not printed)" : "documented development default"}`
   );
+  console.log(
+    `Admin password source:   ${adminSource === "env" ? "SEED_ADMIN_PASSWORD (value not printed)" : "documented development default"}`
+  );
+  if (studentSource === "dev-default" || adminSource === "dev-default") {
+    console.log(
+      "Development defaults are documented in SEED.md and are only valid outside production. Rotate them in any deployed environment."
+    );
+  }
 }
 
 main()
