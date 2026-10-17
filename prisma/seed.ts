@@ -10,6 +10,14 @@
 import { PrismaClient } from "@prisma/client";
 import argon2 from "argon2";
 import { randomBytes } from "crypto";
+import dotenv from "dotenv";
+
+// `tsx prisma/seed.ts` reads no env file on its own, so `npm run db:seed` used
+// to fail with "Environment variable not found: DATABASE_URL" unless the shell
+// happened to export it. Mirror `prisma.config.ts`: `.env.local` first, then
+// `.env`; the real environment always wins and values are never logged.
+dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".env" });
 
 const prisma = new PrismaClient();
 

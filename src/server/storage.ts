@@ -235,7 +235,12 @@ export async function createSignedUploadTarget(
   // its query string; both describe the same PUT target.
   const raw = data.signedUrl ?? data.url;
   if (!raw) throw new StorageError("Upload authorization response contained no URL");
-  const uploadUrl = raw.startsWith("http") ? raw : `${env.SUPABASE_URL}${raw.startsWith("/") ? "" : "/"}${raw}`;
+  // Supabase returns `url` relative to `/storage/v1` (the sign endpoint prefix is
+  // stripped from the response), so resolve relative URLs against storageApiBase()
+  // — the same base used to call the sign endpoint — not the bare project URL.
+  const uploadUrl = raw.startsWith("http")
+    ? raw
+    : `${storageApiBase()}${raw.startsWith("/") ? "" : "/"}${raw}`;
   return { uploadUrl, path: storageKey, expiresIn: opts.expiresInSec };
 }
 

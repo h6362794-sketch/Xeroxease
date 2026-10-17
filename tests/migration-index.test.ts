@@ -15,7 +15,7 @@
 // declare a redundant index, and the checker must notice if one is ever reintroduced.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, mkdirSync, cpSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -105,11 +105,7 @@ describe("RecoveryCode index declaration", () => {
 
 describe("schema:check detects index drift", () => {
   it("passes on the committed schema", () => {
-    const out = execFileSync("npx", ["tsx", "scripts/verify-migrations.ts"], {
-      cwd: ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const out = runTsx(join(ROOT, "scripts", "verify-migrations.ts"), ROOT);
     expect(out).toContain("every declared index exists");
   });
 
@@ -117,9 +113,9 @@ describe("schema:check detects index drift", () => {
     // Run the checker against a mutated copy in a temp dir, so the committed schema
     // is never touched. The checker resolves prisma/ relative to process.cwd().
     const tmp = join(ROOT, ".data", "idx-drift-probe");
-    execFileSync("rm", ["-rf", tmp]);
-    execFileSync("mkdir", ["-p", join(tmp, "prisma")]);
-    execFileSync("cp", ["-r", join(ROOT, "prisma", "migrations"), join(tmp, "prisma", "migrations")]);
+    rmSync(tmp, { recursive: true, force: true });
+    mkdirSync(join(tmp, "prisma"), { recursive: true });
+    cpSync(join(ROOT, "prisma", "migrations"), join(tmp, "prisma", "migrations"), { recursive: true });
 
     const mutated = join(tmp, "prisma", "schema.prisma");
     const src = readFileSync(SCHEMA, "utf8");
@@ -133,28 +129,42 @@ describe("schema:check detects index drift", () => {
     // quotes that a heredoc would mangle.
     writeFileSync(mutated, withDrift, "utf8");
 
-    // Use the repo's own tsx binary; `npx tsx` cannot resolve it from the temp cwd.
-    const tsx = join(ROOT, "node_modules", ".bin", "tsx");
+    // Use the repo's own tsx entry directly (see runTsx): the old code spawned
+    // `npx` and `.bin/tsx`, which need a shell on Windows and fail with ENOENT.
     const script = join(ROOT, "scripts", "verify-migrations.ts");
 
     let exitCode = 0;
     let output = "";
     try {
-      output = execFileSync(tsx, [script], {
-        cwd: tmp,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      output = runTsx(script, tmp);
     } catch (err) {
       exitCode = (err as { status?: number }).status ?? 1;
       const e = err as { stdout?: string; stderr?: string };
       output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
     }
 
-    execFileSync("rm", ["-rf", tmp]);
+    rmSync(tmp, { recursive: true, force: true });
 
     expect(exitCode).toBe(1);
     expect(output).toContain("RecoveryCode declares an index");
     expect(output).toContain("user_id");
   });
 });
+
+/**
+ * Run the repo's own tsx against a script without touching the shell.
+ *
+ * Spawning `npx` or `.bin/tsx` by bare name needs a shell on Windows
+ * (`npx.cmd` / `tsx.cmd` shims), and `rm` / `mkdir -p` / `cp -r` do not exist
+ * there at all — both halves of this suite failed on Windows with
+ * `spawnSync ... ENOENT`. Invoking the Node binary directly on tsx's CLI entry
+ * works on every platform with no shell involved.
+ */
+function runTsx(script: string, cwd: string): string {
+  const tsxCli = join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+  return execFileSync(process.execPath, [tsxCli, script], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
