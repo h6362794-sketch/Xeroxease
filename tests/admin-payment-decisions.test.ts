@@ -99,30 +99,61 @@ describe("PATCH /api/admin/payments/[id]/verify", () => {
   });
 });
 
-describe("verification requires a meaningful note", () => {
-  it.each([[""], ["   "], ["ok"]])("refuses a verification note of %j before any write", async (note) => {
+// The desk note is the only evidence kept for a payment decision. Threshold: 3 characters after
+// trimming, 500 at most (d: owner decision, kept at 3). Both decision routes use the same rule.
+describe.each([
+  ["verify", "@/app/api/admin/payments/[id]/verify/route", "A verification note"],
+  ["reject", "@/app/api/admin/payments/[id]/reject/route", "A rejection note"],
+])("%s note threshold (3 characters after trim, max 500)", (_name, modulePath) => {
+  const refused: Array<[string, string]> = [
+    ["an empty string", ""],
+    ["whitespace only", "   \t\n  "],
+    ["one character", "a"],
+    ["two characters", "ab"],
+    ["two characters padded with spaces", "  a "],
+    ["501 characters", "x".repeat(501)],
+  ];
+  it.each(refused)("refuses %s before any write", async (_label, note) => {
     findUnique.mockResolvedValue({ ...live });
-    const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
+    const { PATCH } = await import(modulePath);
     const res = await PATCH(json({ note }), ctx);
     expect(res.status).toBe(422); // schema validation, as elsewhere in the API
     expect(updateMany).not.toHaveBeenCalled();
     expect(paymentEventCreate).not.toHaveBeenCalled();
+    expect(orderEventCreate).not.toHaveBeenCalled();
   });
 
-  it("refuses a request with no note field at all", async () => {
+  it("refuses a request with no note field at all, before any write", async () => {
     findUnique.mockResolvedValue({ ...live });
-    const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
+    const { PATCH } = await import(modulePath);
     const res = await PATCH(json({}), ctx);
-    expect(res.status).toBe(422); // schema validation, as elsewhere in the API
+    expect(res.status).toBe(422);
     expect(updateMany).not.toHaveBeenCalled();
+    expect(paymentEventCreate).not.toHaveBeenCalled();
+    expect(orderEventCreate).not.toHaveBeenCalled();
   });
 
-  it("accepts a note of three characters after trimming", async () => {
+  it("accepts exactly three characters", async () => {
     findUnique.mockResolvedValue({ ...live });
-    const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
+    const { PATCH } = await import(modulePath);
+    const res = await PATCH(json({ note: "UTR" }), ctx);
+    expect(res.status).toBe(200);
+    expect(paymentEventCreate.mock.calls[0][0].data.note).toBe("UTR");
+  });
+
+  it("accepts three characters after trimming, and stores the trimmed value", async () => {
+    findUnique.mockResolvedValue({ ...live });
+    const { PATCH } = await import(modulePath);
     const res = await PATCH(json({ note: "  UTR  " }), ctx);
     expect(res.status).toBe(200);
     expect(paymentEventCreate.mock.calls[0][0].data.note).toBe("UTR");
+  });
+
+  it("accepts a valid note of more than three characters", async () => {
+    findUnique.mockResolvedValue({ ...live });
+    const { PATCH } = await import(modulePath);
+    const res = await PATCH(json({ note: "Checked the bank statement, UTR matches." }), ctx);
+    expect(res.status).toBe(200);
   });
 });
 
