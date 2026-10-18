@@ -21,6 +21,11 @@ export interface CreateOrderInput {
   finishing: string[];
 }
 
+/** Payment states an admin may verify or reject. */
+export const VERIFIABLE_PAYMENT_STATES = ["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"] as const;
+/** Order states that can never be moved by a payment decision. */
+export const TERMINAL_ORDER_STATES = ["CANCELLED", "FAILED", "COMPLETED"] as const;
+
 export class OrderError extends Error {
   status: number;
   constructor(message: string, status = 400) {
@@ -302,6 +307,16 @@ export async function adminUpdateOrderStatus(params: {
 
   const patch: Record<string, unknown> = { status: params.toStatus };
   const now = new Date();
+  // Confirming an order through the status control is a payment decision. It must
+  // leave the same record as the payment-verification route; otherwise the order says
+  // "Confirmed" while its payment fields still say "Pending" and nothing names who
+  // confirmed it.
+  const confirmsPayment = params.toStatus === "PAYMENT_CONFIRMED";
+  if (confirmsPayment) {
+    patch.paymentStatus = "PAYMENT_CONFIRMED";
+    patch.paymentVerifiedBy = params.actorId;
+    patch.paymentVerifiedAt = now;
+  }
   if (params.toStatus === "COMPLETED") patch.completedAt = now;
   if (params.toStatus === "CANCELLED") {
     patch.cancelledAt = now;
@@ -319,7 +334,15 @@ export async function adminUpdateOrderStatus(params: {
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.order.update({ where: { id: order.id }, data: patch as never });
+    // Conditional on the status we validated: a concurrent change fails instead of
+    // being silently overwritten.
+    const { count } = await tx.order.updateMany({
+      where: { id: order.id, status: order.status },
+      data: patch as never,
+    });
+    if (count !== 1) {
+      throw new OrderError("This order was changed by someone else. Refresh and try again.", 409);
+    }
     await tx.orderEvent.create({
       data: {
         orderId: order.id,
@@ -331,6 +354,21 @@ export async function adminUpdateOrderStatus(params: {
         actorRole: params.actorRole,
       },
     });
+    if (confirmsPayment) {
+      await tx.paymentEvent.create({
+        data: {
+          orderId: order.id,
+          actorId: params.actorId,
+          actorRole: params.actorRole,
+          type: "VERIFIED",
+          amount: order.totalAmount,
+          reference: order.paymentRef,
+          note: params.note
+            ? `Confirmed via order status control: ${params.note}`
+            : "Confirmed via order status control (no payment-review step)",
+        },
+      });
+    }
   });
 
   // Notifications
@@ -375,8 +413,10 @@ export async function cancelOrder(params: {
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.order.update({
-      where: { id: order.id },
+    // Conditional on the status that was checked for eligibility. Without this, a
+    // student could cancel an order at the moment the desk moved it into printing.
+    const { count } = await tx.order.updateMany({
+      where: { id: order.id, userId: params.userId, status: order.status },
       data: {
         status: "CANCELLED",
         cancelledAt: new Date(),
@@ -384,6 +424,9 @@ export async function cancelOrder(params: {
         cancelReason: params.reason ?? null,
       },
     });
+    if (count !== 1) {
+      throw new OrderError("This order was just updated. Refresh and check its status.", 409);
+    }
     await tx.orderEvent.create({
       data: {
         orderId: order.id,

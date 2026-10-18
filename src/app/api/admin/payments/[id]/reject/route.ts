@@ -4,6 +4,7 @@ import { apiError, parseBody, withErrorHandling } from "@/server/api-utils";
 import { z } from "zod";
 import { audit } from "@/server/audit";
 import { NOTIFY } from "@/server/notifications";
+import { OrderError, TERMINAL_ORDER_STATES, VERIFIABLE_PAYMENT_STATES } from "@/server/orders";
 
 const schema = z.object({
   note: z.string().trim().min(3, "A rejection note is required.").max(500),
@@ -22,37 +23,49 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return apiError("Payment is not in a rejectable state.", 409);
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: order.id },
-        data: {
-          paymentStatus: "PAYMENT_REJECTED",
-          status: "PAYMENT_PENDING", // back to pending so student can resubmit
-          paymentNote: data.note,
-        },
+    try {
+      await prisma.$transaction(async (tx) => {
+        const { count } = await tx.order.updateMany({
+          where: {
+            id: order.id,
+            paymentStatus: { in: [...VERIFIABLE_PAYMENT_STATES] },
+            status: { notIn: [...TERMINAL_ORDER_STATES] },
+          },
+          data: {
+            paymentStatus: "PAYMENT_REJECTED",
+            status: "PAYMENT_PENDING", // back to pending so student can resubmit
+            paymentNote: data.note,
+          },
+        });
+        if (count !== 1) {
+          throw new OrderError("This order changed while you were reviewing it. Refresh and check its current state.", 409);
+        }
+        await tx.paymentEvent.create({
+          data: {
+            orderId: order.id,
+            actorId: user.id,
+            actorRole: user.role,
+            type: "REJECTED",
+            reference: order.paymentRef,
+            note: data.note,
+          },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: order.id,
+            type: "PAYMENT_REJECTED",
+            fromStatus: order.status,
+            toStatus: "PAYMENT_PENDING",
+            message: data.note,
+            actorId: user.id,
+            actorRole: user.role,
+          },
+        });
       });
-      await tx.paymentEvent.create({
-        data: {
-          orderId: order.id,
-          actorId: user.id,
-          actorRole: user.role,
-          type: "REJECTED",
-          reference: order.paymentRef,
-          note: data.note,
-        },
-      });
-      await tx.orderEvent.create({
-        data: {
-          orderId: order.id,
-          type: "PAYMENT_REJECTED",
-          fromStatus: order.status,
-          toStatus: "PAYMENT_PENDING",
-          message: data.note,
-          actorId: user.id,
-          actorRole: user.role,
-        },
-      });
-    });
+    } catch (err) {
+      if (err instanceof OrderError) return apiError(err.message, err.status);
+      throw err;
+    }
 
     await NOTIFY.paymentRejected(order.userId, order.orderNumber, order.id);
     await audit({
