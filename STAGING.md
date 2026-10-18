@@ -222,8 +222,8 @@ Record the results and the sizes used.
 | # | Gap | Effect on staging smoke test | Status |
 |---|---|---|---|
 | B1 | Order page "Open payment QR" links to `/orders/new?pay=<id>`. The wizard never reads `pay`, and the reference form lives only in wizard step 5. | Students cannot submit or resubmit a payment reference after leaving step 5 or after a rejection. S5 resubmission fails. | **Not fixed.** Staging prep only. Proposed fix: show the reference form on the order page for `PAYMENT_PENDING`, `PAYMENT_REJECTED` and `PAYMENT_FAILED`, posting to the existing `/api/payment/submit/:id`. Needs approval. |
-| B2 | No admin UI consumes collection codes. Only `POST /api/admin/collection`. | The desk must use the API (S7). | Known. Needs a UI decision. |
-| B3 | The status control offers `READY_FOR_COLLECTION → COMPLETED` with no collection code. | Bypasses the code check. | Policy and control decision. |
+| B2 | No admin UI consumes collection codes. Only `POST /api/admin/collection`. | The desk must use the API (S7). | Addressed in code (readiness step C): Admin → Collection page (check, then confirm). Not yet tested in a browser. |
+| B3 | The status control offers `READY_FOR_COLLECTION → COMPLETED` with no collection code. | Bypasses the code check. | Addressed in code (readiness step C): the status route refuses this transition (409) and the table no longer offers it. A collected order that the student cannot show a code for has no completion path; this is an open decision. |
 | B4 | Staging has no Super Admin until the seed runs. | S2 cannot start. | Solved by the seed step (section 2, step 8). |
 | B5 | Dependency audit fails (`braces`, GHSA-vfj7-8cjw-p6xm, no patched version). | CI stays red. | Reported, not suppressed. See section 7. |
 | B6 | Supabase bucket privacy, signed URLs, direct upload end to end, Upstash, and the Free-plan byte limit. | Not verified in this sandbox. | Needs staging run (S3, S11). |

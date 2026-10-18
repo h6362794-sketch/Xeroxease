@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import {
-  LayoutDashboard, Package, Banknote, Users, IndianRupee, Star, ScrollText, Settings, LogOut, Menu, X, ExternalLink,
+  LayoutDashboard, Package, PackageCheck, Banknote, Users, IndianRupee, Star, ScrollText, Settings, LogOut, Menu, X, ExternalLink,
 } from "lucide-react";
 import { LogoMark } from "@/components/logo";
 import { api } from "@/lib/api-client";
@@ -15,6 +15,7 @@ const NAV = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/orders", label: "Orders", icon: Package },
   { href: "/admin/payments", label: "Payments", icon: Banknote },
+  { href: "/admin/collection", label: "Collection", icon: PackageCheck },
   { href: "/admin/feedback", label: "Feedback", icon: Star },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/pricing", label: "Pricing", icon: IndianRupee },

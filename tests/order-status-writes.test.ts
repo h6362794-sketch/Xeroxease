@@ -115,6 +115,16 @@ describe("adminUpdateOrderStatus", () => {
     expect(paymentEventCreate).not.toHaveBeenCalled();
   });
 
+  it("refuses to complete a ready order through the status control, so its collection code stays live", async () => {
+    findUnique.mockResolvedValueOnce({ ...ORDER, status: "READY_FOR_COLLECTION" });
+    const { adminUpdateOrderStatus } = await import("@/server/orders");
+    await expect(
+      adminUpdateOrderStatus({ orderId: ORDER.id, toStatus: "COMPLETED", actorId: "admin-1", actorRole: "ADMIN" })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(orderEventCreate).not.toHaveBeenCalled();
+  });
+
   it("sending an order back to payment pending clears a payment that was under review", async () => {
     const { adminUpdateOrderStatus } = await import("@/server/orders");
     findUnique.mockResolvedValue({ ...ORDER, status: "PAYMENT_UNDER_REVIEW", paymentStatus: "PAYMENT_UNDER_REVIEW" });

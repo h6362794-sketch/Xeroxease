@@ -40,7 +40,8 @@ const NEXT_STATUS_OPTIONS: Record<string, string[]> = {
   PROCESSING: ["PRINTING", "QUALITY_CHECK", "CANCELLED", "FAILED"],
   PRINTING: ["QUALITY_CHECK", "READY_FOR_COLLECTION", "FAILED"],
   QUALITY_CHECK: ["READY_FOR_COLLECTION", "FAILED"],
-  READY_FOR_COLLECTION: ["COMPLETED", "FAILED"],
+  // COMPLETED is not offered: a collected order is completed with its collection code (Admin → Collection).
+  READY_FOR_COLLECTION: ["FAILED"],
   COMPLETED: [],
   CANCELLED: [],
   FAILED: [],

@@ -61,7 +61,7 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/admin/orders` | ADMIN+ | `?q=&status=&paymentStatus=&sort=&dir=&page=` server-side pagination. |
-| PATCH | `/admin/orders/:id/status` | ADMIN+ | `{ status, note? }` — validates legal transitions; audited; generates collection token on READY. |
+| PATCH | `/admin/orders/:id/status` | ADMIN+ | `{ status, note? }` — validates legal transitions; audited; generates collection token on READY. Refuses `READY_FOR_COLLECTION → COMPLETED` (409): collect with the code instead. |
 | PATCH | `/admin/orders/:id/files/:fileId/pagecount` | ADMIN+ | `{ pageCount }` — sets `ADMIN_VERIFIED`; audited. |
 | GET | `/admin/payments?state=` | ADMIN+ | Queue: PENDING_REVIEW / CONFIRMED / REJECTED. |
 | PATCH | `/admin/payments/:id/verify` | ADMIN+ | Marks `PAYMENT_CONFIRMED`; audited; notifies student. |
@@ -76,7 +76,7 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 | GET/POST/PATCH/DELETE | `/admin/payment-qr` | SUPER_ADMIN | Get config / upload image / enable-disable / remove; stored privately; audited. |
 | GET/PATCH | `/admin/settings` | SUPER_ADMIN | Instructions, retention, queue capacity; audited. |
 | GET | `/admin/audit-logs` | SUPER_ADMIN | Filter by action, search, paginate. |
-| POST | `/admin/collection` | ADMIN+ | `{ token, consume }` — verify or consume collection QR (consume completes the order). |
+| POST | `/admin/collection` | ADMIN+ | `{ token, consume }` — verify or consume collection QR (consume completes the order). The Admin → Collection page calls it: check (`consume: false`), then confirm (`consume: true`). |
 
 ## Public
 

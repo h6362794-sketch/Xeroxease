@@ -337,6 +337,14 @@ export async function adminUpdateOrderStatus(params: {
   if (!isTransitionAllowed(order.status, params.toStatus)) {
     throw new OrderError(`Cannot move order from ${order.status} to ${params.toStatus}.`, 409);
   }
+  // A collected order must be completed by consuming its single-use collection code
+  // (consumeCollectionToken). Completing it here would leave that code live on a finished order.
+  if (order.status === "READY_FOR_COLLECTION" && params.toStatus === "COMPLETED") {
+    throw new OrderError(
+      "Mark a collected order with its collection code (Admin → Collection), so the code is used up.",
+      409
+    );
+  }
 
   const patch: Record<string, unknown> = { status: params.toStatus };
   const now = new Date();
