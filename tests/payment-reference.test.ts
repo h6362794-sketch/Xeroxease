@@ -38,3 +38,34 @@ describe("isPaymentReferenceConflict", () => {
     expect(isPaymentReferenceConflict(new Error("boom"))).toBe(false);
   });
 });
+
+/**
+ * Finding 6 boundary tests. They pin the current normalisation rules so a change is deliberate.
+ * No legacy payment evidence is normalised by these tests: normalisation applies to new
+ * submissions only. See docs/payment-reference-collision-plan.md before changing either.
+ */
+describe("payment reference boundaries", () => {
+  it("is idempotent, so a normalised value normalises to itself", () => {
+    for (const raw of ["utr 9876 5432", "  ab/cd.12-3_4 ", "UTR1234"]) {
+      const once = normalizePaymentReference(raw);
+      expect(normalizePaymentReference(once)).toBe(once);
+    }
+  });
+
+  it("keeps separators significant: UTR-1234 and UTR1234 are different references", () => {
+    expect(normalizePaymentReference("UTR-1234")).not.toBe(normalizePaymentReference("UTR1234"));
+  });
+
+  it("accepts a reference only after normalisation, and only in the allowed alphabet", () => {
+    expect(isValidPaymentReference(normalizePaymentReference("utr 1234"))).toBe(true);
+    expect(isValidPaymentReference(normalizePaymentReference("UTR<1234>"))).toBe(false);
+    expect(isValidPaymentReference(normalizePaymentReference("UTR;DROP"))).toBe(false);
+  });
+
+  it("applies the 4-character minimum to the trimmed input, as the schema does", async () => {
+    const { paymentSubmitSchema } = await import("@/server/validation");
+    expect(paymentSubmitSchema.safeParse({ reference: "  ab " }).success).toBe(false);
+    expect(paymentSubmitSchema.safeParse({ reference: " ab cd " }).success).toBe(true);
+    expect(paymentSubmitSchema.safeParse({ reference: " ab cd " }).data?.reference).toBe("ABCD");
+  });
+});
