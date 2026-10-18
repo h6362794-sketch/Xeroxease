@@ -21,6 +21,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             analysisStatus: true,
             analysisError: true,
             mimeType: true,
+            purgedAt: true,
           },
         },
         events: { orderBy: { createdAt: "asc" } },

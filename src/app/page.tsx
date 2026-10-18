@@ -267,7 +267,7 @@ const FAQS = [
   { q: "How is the page count decided?", a: "Our server-side document engine parses your files and detects pages automatically. If a format can't be parsed reliably, the print desk verifies it manually before printing." },
   { q: "How do payments work?", a: "Scan the print desk's UPI QR with any payment app, pay the exact amount, and submit the transaction reference. A human verifies it — no payment gateway, no card details stored." },
   { q: "When can I cancel an order?", a: "While the order is awaiting payment or under payment review. Once printing begins, cancellation is disabled." },
-  { q: "What happens to my documents afterwards?", a: "Files are retained for a limited, configurable period after completion and then purged. You can always download your invoice." },
+  { q: "What happens to my documents afterwards?", a: "Unordered uploads are deleted after 24 hours. Documents on an order are deleted after the print shop's retention period (30 days by default, counted from completion, cancellation or failure). Order records are kept for accounting." },
   { q: "My document shows 'needs review'. What now?", a: "Some formats (like legacy .doc/.ppt) hide their page counts. The print desk verifies these manually — you'll see the confirmed count before paying." },
 ];
 

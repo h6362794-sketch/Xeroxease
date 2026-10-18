@@ -321,7 +321,20 @@ export function OrderWizard({ userId }: { userId: string }) {
     }
   };
 
-  const removeFile = (id: string) => setFiles((prev) => prev.filter((f) => f.id !== id));
+  // Removing a document deletes it on the server too. Before this, the button only changed the
+  // list, so the document stayed in the student's quota and in storage until it was forgotten.
+  const removeFile = async (id: string) => {
+    try {
+      await api(`/api/uploads/${id}`, { method: "DELETE" });
+    } catch (err) {
+      // 404: already gone, or attached to an order. Either way it is no longer part of this draft.
+      if (!(err instanceof ApiError && err.status === 404)) {
+        toast(err instanceof ApiError ? err.message : "Could not remove that document. Please try again.", "error");
+        return;
+      }
+    }
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+  };
 
   const next = () => setStep((s) => Math.min(6, s + 1));
   const back = () => setStep((s) => Math.max(0, s - 1));

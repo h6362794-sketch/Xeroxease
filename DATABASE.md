@@ -110,5 +110,7 @@ or password) when the configuration is ambiguous or unsafe.
 
 ## Data retention
 
-- Configurable via Super Admin → Settings (`retentionDays`, default 30): completed-order files may be purged after N days while order metadata is retained for accounting.
+- Unattached uploads (never placed on an order) are purged 24 hours after upload (`UNATTACHED_UPLOAD_TTL_HOURS`, fixed in code).
+- Order documents are purged `retentionDays` after the order is completed, cancelled or failed (Super Admin → Settings; default 30, range 1–3650). The purge deletes the stored object first and then sets `uploaded_files.purged_at`; the row, its name and page count stay, so order history is kept. A purged document cannot be downloaded (HTTP 410) and cannot be attached to a new order.
+- Both purges run from `POST /api/admin/uploads/sweep`, which the platform scheduler must call (see DEPLOYMENT.md). Nothing in the app runs it on a timer.
 - Sessions expire automatically (`expiresAt`) and can be swept by a periodic job. Recovery codes never expire unless an administrator issued them (`expires_at` is null for self-generated codes); a used code stays in its row with `used_at` set so the account shows "code used" and can be prompted to rotate it.

@@ -206,13 +206,14 @@ Record the results and the sizes used.
    reference stays bound to the cancelled order and blocks reuse on other orders. This is
    the conservative choice (it stops double use). Decide whether unpaid cancellations should
    release the reference; the release rule is a policy choice.
-4. **Abandoned uploads, and the retention promise.** Students cannot delete an uploaded
-   file. Unattached completed files count toward the 10-per-user cap indefinitely, and the
-   cap is checked non-atomically. The only sweep expires pending upload intents; it does
-   not delete completed unattached files. Admin → Settings "retention days" is saved but
-   nothing reads it. The privacy page says files "are retained for a limited, configurable
-   period after order completion and then deleted". **That promise is not implemented.**
-   This is a launch blocker for the privacy claim, not only a policy question.
+4. **Abandoned uploads, and the retention promise.** *Addressed in code (readiness step B),
+   not yet verified on staging.* Students can delete an unordered upload
+   (`DELETE /api/uploads/:id`). Unordered uploads are purged 24 hours after upload. Order
+   documents are purged `retentionDays` after the order completes, is cancelled or fails.
+   Purges claim the row before deleting the object, and a failed object delete keeps the row.
+   `POST /api/admin/uploads/sweep` runs all of this and needs a scheduler that sends
+   `Authorization: Bearer $CRON_SECRET`. Nothing in the app schedules it. Until a scheduler
+   is set up and a run is seen, the privacy promise is still not being kept on staging.
 
 ---
 
@@ -252,5 +253,5 @@ Decision for the user before launch:
 - **Go** for a staging deployment to exercise sections 2–4 and the provider checks, once
   the [USER] steps are done.
 - **No-go** for production until: B1 is fixed; the audit decision in section 7 is made; the
-  privacy retention promise (section 5, item 4) is either implemented or changed; the
+  privacy retention promise (section 5, item 4) is implemented in code and its scheduled run is seen working on staging; the
   nine provider checks and S1–S11 are recorded as passing.

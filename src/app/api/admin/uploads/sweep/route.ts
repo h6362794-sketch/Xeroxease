@@ -1,24 +1,29 @@
-// POST /api/admin/uploads/sweep — release upload intents that expired before their
-// object was ever verified (SUPER_ADMIN only).
+// POST /api/admin/uploads/sweep — the upload cleanup job.
 //
-// This application deliberately has no cron/worker, so abandoned uploads need a
-// trigger an operator controls. The sweep is bounded (default 50 rows) and
-// re-runnable; it deletes only PENDING rows plus their objects, never anything that an
-// order can reference, because `createOrder` attaches only COMPLETED documents.
+// One bounded, re-runnable pass that:
+//   * releases upload intents that expired before their object was verified (direct uploads);
+//   * deletes unattached documents abandoned for longer than UNATTACHED_UPLOAD_TTL_HOURS;
+//   * deletes order documents past the retention period (Settings → retention days).
+//
+// Callers: a Super Admin session (manual run), or a scheduler presenting
+// `Authorization: Bearer <CRON_SECRET>` (see src/server/cron-auth.ts). The application runs no
+// scheduler of its own, so one of these must call it on a schedule (DEPLOYMENT.md).
 import { requireRole } from "@/server/auth";
 import { apiError, enforceRateLimit, json, withErrorHandling } from "@/server/api-utils";
 import { RATE_LIMITS } from "@/server/rate-limit";
 import { audit } from "@/server/audit";
-import { releaseExpiredIntents } from "@/server/direct-upload/service";
+import { runUploadSweep } from "@/server/document-lifecycle";
 import { directUploadsSupported } from "@/server/direct-upload/capability";
+import { isCronRequest } from "@/server/cron-auth";
 
 const MAX_LIMIT = 500;
 const DEFAULT_LIMIT = 50;
 
 export async function POST(req: Request) {
   return withErrorHandling(async () => {
-    const actor = await requireRole("SUPER_ADMIN");
-    const limited = await enforceRateLimit(req, RATE_LIMITS.admin, "admin-uploads-sweep", actor.id);
+    const scheduled = isCronRequest(req);
+    const actor = scheduled ? null : await requireRole("SUPER_ADMIN");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.admin, "admin-uploads-sweep", actor?.id);
     if (limited) return limited;
 
     const url = new URL(req.url);
@@ -32,18 +37,13 @@ export async function POST(req: Request) {
       limit = parsed;
     }
 
-    if (!directUploadsSupported().enabled) {
-      // Nothing can expire on a backend that never issues intents.
-      return json({ released: 0, attempted: 0, skipped: "DIRECT_UPLOADS_UNAVAILABLE" });
-    }
-
-    const report = await releaseExpiredIntents(limit);
+    const report = await runUploadSweep({ limit, intents: directUploadsSupported().enabled });
     await audit({
-      actorId: actor.id,
-      actorRole: actor.role,
+      actorId: actor?.id ?? null,
+      actorRole: actor?.role ?? "SYSTEM",
       action: "UPLOAD_INTENTS_SWEEP",
       targetType: "SETTINGS",
-      metadata: { ...report },
+      metadata: { ...report, trigger: scheduled ? "schedule" : "manual" },
     });
     return json(report);
   });

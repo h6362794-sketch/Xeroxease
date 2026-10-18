@@ -87,7 +87,7 @@ whose `status = COMPLETED`**, i.e. verified against storage (`src/server/orders.
 | Storage outage during verification | 503 `STORAGE_UNAVAILABLE`; row stays **PENDING** with a live intent → a retry re-verifies the *same* object, no re-upload |
 | Database failure during completion | 503 `PERSIST_FAILED`; row stays PENDING, object kept, retry is idempotent |
 | Repeated `complete` after success | 200 with the same verified payload; nothing re-read or rewritten |
-| Abandoned PENDING row | released by `POST /api/admin/uploads/sweep` (SUPER_ADMIN, capped, re-runnable). **There is no cron in this app** — see §5 |
+| Abandoned PENDING row | released by `POST /api/admin/uploads/sweep` (SUPER_ADMIN or the `CRON_SECRET` bearer, capped, re-runnable). **There is no cron in this app** — see §5 |
 
 ---
 
@@ -150,8 +150,10 @@ Required, on the Supabase project that backs the deployment:
   the key it generated. A row without a verified object can never be ordered, priced or
   printed.
 * **Reaping.** `releaseExpiredIntents(limit=50)` deletes expired PENDING rows and their
-  objects. It is exposed as `POST /api/admin/uploads/sweep?limit=N` (SUPER_ADMIN) because
-  the application has no scheduler. **A deployment that never calls it will accumulate
+  objects. The same endpoint also purges unordered documents after 24 hours and order
+  documents after `retentionDays` (see DATABASE.md, "Data retention"). It is exposed as
+  `POST /api/admin/uploads/sweep?limit=N` (SUPER_ADMIN, or the `CRON_SECRET` bearer for a
+  scheduler) because the application has no scheduler. **A deployment that never calls it will accumulate
   abandoned objects.** If you need automatic expiry, either schedule that call (cron,
   GitHub Actions, Vercel Cron — all outside this codebase) or enable Supabase's own
   lifecycle rules for the bucket.

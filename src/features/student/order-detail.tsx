@@ -46,6 +46,8 @@ interface OrderData {
     pageCountSource: string | null;
     analysisStatus: string;
     analysisError: string | null;
+    /** Set when the document was deleted under the retention policy. */
+    purgedAt?: string | null;
   }[];
   events: { id: string; type: string; message: string | null; createdAt: string }[];
   feedback: { id: string; rating: number; comment: string | null } | null;
@@ -248,6 +250,9 @@ export function OrderDetail({ orderId }: { orderId: string; userId: string }) {
                 </p>
               </div>
             </div>
+            {f.purgedAt ? (
+              <span className="text-[11px] text-zinc-500 shrink-0 text-right">Deleted under<br />retention policy</span>
+            ) : (
             <a
               href={`/api/files/${f.id}/download`}
               /* `noreferrer`: the route answers with a short-lived signed storage URL,
@@ -258,6 +263,7 @@ export function OrderDetail({ orderId }: { orderId: string; userId: string }) {
             >
               <Download className="h-4 w-4" />
             </a>
+            )}
           </div>
         ))}
       </Card>

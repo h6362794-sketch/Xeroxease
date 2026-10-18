@@ -96,7 +96,7 @@ Test that you can restore it into a scratch database before you trust it. Also s
 your storage bucket (uploaded documents) — the database references files by key, so a
 database restore without a matching storage restore leaves orders pointing at nothing.
 
-Retention and scheduling are your responsibility; nothing in the app does this for you.
+Document retention needs a scheduler, and the app does not run one. Schedule `POST /api/admin/uploads/sweep` (for example, hourly) with the header `Authorization: Bearer <CRON_SECRET>`. Set `CRON_SECRET` to a random value of at least 32 characters, store it only in the platform's secret store, and give the same value to the scheduler. Each run is audited as `UPLOAD_INTENTS_SWEEP` with `trigger: schedule`. Check the sweep report (`retentionFailed`, `unattachedFailed`, `intentsFailed`) after the first runs.
 Never run `prisma migrate reset` or `prisma db push --force-reset` against production.
 
 ### Rollback
@@ -146,7 +146,7 @@ the check.
 - [ ] Direct-upload round trip exercised end to end at the **largest size the provider actually allows** — verify against a real Supabase bucket. The test has **not** been run by this repository's CI. Work through the nine manual
   provider checks in [`UPLOADS.md`](UPLOADS.md) §8.1 — the app returns 2xx against a bucket
   that fails check 1, because it never looks at the public URL. Record the exact size you tested; do not report "50 MB verified" without it.
-- [ ] `POST /api/admin/uploads/sweep` scheduled somewhere (cron / Vercel Cron / a reminder), since there is no in-app scheduler for abandoned uploads
+- [ ] `POST /api/admin/uploads/sweep` scheduled with `CRON_SECRET` (cron / Vercel Cron / GitHub Actions), since there is no in-app scheduler for abandoned or retained uploads
 - [ ] Admin accounts provisioned via Super Admin only; no shared accounts
 - [ ] Payment QR uploaded + enabled in Admin → Settings
 - [ ] Super Admin → Audit Logs receiving events (test a login + order)
@@ -154,6 +154,7 @@ the check.
 - [ ] Account recovery understood by staff: users self-serve at **Profile → Security**; users with no code are handled by a Super Admin issuing one from **Admin → Users** after in-person ID verification
 - [ ] Backups scheduled (DB + storage) and a restore tested
 - [ ] Retention policy configured (Settings → retention days)
+- [ ] `CRON_SECRET` set (32+ characters) and the upload sweep scheduled; first scheduled run seen in Audit Logs with `trigger: schedule`
 
 ## Monitoring & operations
 

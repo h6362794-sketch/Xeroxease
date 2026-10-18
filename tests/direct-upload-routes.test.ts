@@ -26,6 +26,8 @@ let createUploadIntent: ReturnType<typeof vi.fn>;
 let completeUploadIntent: ReturnType<typeof vi.fn>;
 let abortUploadIntent: ReturnType<typeof vi.fn>;
 let releaseExpiredIntents: ReturnType<typeof vi.fn>;
+let runUploadSweep: ReturnType<typeof vi.fn>;
+let purgeUnattachedUpload: ReturnType<typeof vi.fn>;
 let audit: ReturnType<typeof vi.fn>;
 
 type Routes = {
@@ -34,6 +36,7 @@ type Routes = {
   abort: typeof import("@/app/api/uploads/abort/route");
   capability: typeof import("@/app/api/uploads/capability/route");
   sweep: typeof import("@/app/api/admin/uploads/sweep/route");
+  remove: typeof import("@/app/api/uploads/[id]/route");
   download: typeof import("@/app/api/files/[id]/download/route");
 };
 let routes: Routes;
@@ -79,7 +82,9 @@ async function load() {
     verified: true,
   }));
   abortUploadIntent = vi.fn(async () => ({ released: true }));
-  releaseExpiredIntents = vi.fn(async () => ({ released: 3, attempted: 3 }));
+  releaseExpiredIntents = vi.fn(async () => ({ released: 3, attempted: 3, failed: 0 }));
+  purgeUnattachedUpload = vi.fn(async () => "purged");
+  runUploadSweep = vi.fn(async () => ({ released: 3, attempted: 3, intentsFailed: 0, unattachedAttempted: 0, unattachedPurged: 0, unattachedFailed: 0, leftoversRemoved: 0, retentionAttempted: 0, retentionPurged: 0, retentionFailed: 0, retentionDays: 30 }));
   audit = vi.fn(async () => undefined);
 
   vi.resetModules();
@@ -100,6 +105,7 @@ async function load() {
   vi.doMock("@/server/rate-limit", () => ({
     RATE_LIMITS: {
       uploadIntent: { limit: 40, windowMs: 600_000 },
+      upload: { limit: 30, windowMs: 600_000 },
       uploadComplete: { limit: 40, windowMs: 600_000 },
       download: { limit: 120, windowMs: 600_000 },
       admin: { limit: 120, windowMs: 60_000 },
@@ -115,6 +121,7 @@ async function load() {
     },
   }));
   vi.doMock("@/server/audit", () => ({ audit }));
+  vi.doMock("@/server/document-lifecycle", () => ({ runUploadSweep, purgeUnattachedUpload }));
   vi.doMock("@/server/storage", async () => {
     // Real `StorageError` so the route's `instanceof` check keeps working; everything
     // else that would touch the network is replaced.
@@ -141,6 +148,7 @@ async function load() {
     capability: await import("@/app/api/uploads/capability/route"),
     sweep: await import("@/app/api/admin/uploads/sweep/route"),
     download: await import("@/app/api/files/[id]/download/route"),
+    remove: await import("@/app/api/uploads/[id]/route"),
   };
 }
 
@@ -155,10 +163,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function post(body: unknown, path = "/api/uploads/intent") {
+function post(body: unknown, path = "/api/uploads/intent", extraHeaders: Record<string, string> = {}) {
   return new Request(`https://app.test${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.9" },
+    headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.9", ...extraHeaders },
     body: JSON.stringify(body),
   });
 }
@@ -363,26 +371,93 @@ describe("POST /api/admin/uploads/sweep", () => {
   it("runs the bounded sweep and reports it", async () => {
     const res = await routes.sweep.POST(post({}, "/api/admin/uploads/sweep?limit=25"));
     expect(res.status).toBe(200);
-    expect(await body(res)).toEqual({ released: 3, attempted: 3 });
-    expect(releaseExpiredIntents).toHaveBeenCalledWith(25);
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPLOAD_INTENTS_SWEEP" }));
+    expect(await body(res)).toMatchObject({ released: 3, attempted: 3, retentionDays: 30 });
+    expect(runUploadSweep).toHaveBeenCalledWith({ limit: 25, intents: true });
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "UPLOAD_INTENTS_SWEEP", metadata: expect.objectContaining({ trigger: "manual" }) })
+    );
   });
 
   it("defaults the batch size and rejects nonsense limits", async () => {
     await routes.sweep.POST(post({}, "/api/admin/uploads/sweep"));
-    expect(releaseExpiredIntents).toHaveBeenLastCalledWith(50);
+    expect(runUploadSweep).toHaveBeenLastCalledWith({ limit: 50, intents: true });
     for (const raw of ["0", "-1", "501", "abc", "1.5"]) {
       const res = await routes.sweep.POST(post({}, `/api/admin/uploads/sweep?limit=${raw}`));
       expect(res.status, raw).toBe(400);
     }
   });
 
-  it("does nothing on a backend that never issues intents", async () => {
+  it("still runs abandonment and retention cleanup when direct uploads are off", async () => {
     envOverrides.STORAGE_BACKEND = "local";
     await load();
     const res = await routes.sweep.POST(post({}, "/api/admin/uploads/sweep"));
-    expect(await body(res)).toEqual({ released: 0, attempted: 0, skipped: "DIRECT_UPLOADS_UNAVAILABLE" });
-    expect(releaseExpiredIntents).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    // Intent release is skipped (no intents exist), but unattached and retained documents are
+    // purged on every backend, so the cleanup must not be gated on direct uploads.
+    expect(runUploadSweep).toHaveBeenCalledWith({ limit: 50, intents: false });
+  });
+
+  it("accepts the scheduler secret in place of a session, and records the trigger", async () => {
+    session = null;
+    envOverrides.CRON_SECRET = "cron-secret-0123456789abcdef-0123456789";
+    await load();
+    const res = await routes.sweep.POST(
+      post({}, "/api/admin/uploads/sweep", { authorization: "Bearer cron-secret-0123456789abcdef-0123456789" })
+    );
+    expect(res.status).toBe(200);
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ actorId: null, actorRole: "SYSTEM", metadata: expect.objectContaining({ trigger: "schedule" }) })
+    );
+  });
+
+  it("rejects a wrong scheduler secret, and never treats a short one as valid", async () => {
+    session = null;
+    envOverrides.CRON_SECRET = "cron-secret-0123456789abcdef-0123456789";
+    await load();
+    const wrong = await routes.sweep.POST(post({}, "/api/admin/uploads/sweep", { authorization: "Bearer nope" }));
+    expect(wrong.status).toBe(401);
+    envOverrides.CRON_SECRET = "too-short";
+    await load();
+    const short = await routes.sweep.POST(post({}, "/api/admin/uploads/sweep", { authorization: "Bearer too-short" }));
+    expect(short.status).toBe(401);
+    expect(runUploadSweep).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE /api/uploads/:id", () => {
+  const ID = "44444444-4444-4444-8444-444444444444";
+  const removeReq = () =>
+    routes.remove.DELETE(new Request(`https://app.test/api/uploads/${ID}`, { method: "DELETE", headers: { "x-forwarded-for": "203.0.113.9" } }), {
+      params: Promise.resolve({ id: ID }),
+    });
+
+  it("removes the caller's unattached document and audits it", async () => {
+    purgeUnattachedUpload.mockResolvedValueOnce("purged");
+    const res = await removeReq();
+    expect(res.status).toBe(200);
+    expect(purgeUnattachedUpload).toHaveBeenCalledWith(ID, OWNER);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPLOAD_REMOVED", targetId: ID }));
+  });
+
+  it("answers 404 when the document is not the caller's or is attached to an order", async () => {
+    purgeUnattachedUpload.mockResolvedValueOnce("not_found");
+    const res = await removeReq();
+    expect(res.status).toBe(404);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 and keeps the document when storage refuses the delete", async () => {
+    purgeUnattachedUpload.mockResolvedValueOnce("failed");
+    const res = await removeReq();
+    expect(res.status).toBe(503);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("requires a session", async () => {
+    session = null;
+    const res = await removeReq();
+    expect(res.status).toBe(401);
+    expect(purgeUnattachedUpload).not.toHaveBeenCalled();
   });
 });
 
@@ -418,6 +493,13 @@ describe("GET /api/files/:id/download", () => {
     expect(createSignedDownloadUrl).toHaveBeenCalledWith(KEY, { expiresInSec: 60, download: undefined });
     await download(FILE_ID, "?mode=bogus");
     expect(createSignedDownloadUrl).toHaveBeenLastCalledWith(KEY, { expiresInSec: 60, download: "notes.pdf" });
+  });
+
+  it("answers 410 for a document whose bytes the retention policy deleted, to its owner", async () => {
+    dbFile = { ...completed, purgedAt: new Date("2026-10-01T00:00:00Z") };
+    const res = await download(FILE_ID);
+    expect(res.status).toBe(410);
+    expect(createSignedDownloadUrl).not.toHaveBeenCalled();
   });
 
   it("gives the same 404 for a foreign document as for a missing one", async () => {

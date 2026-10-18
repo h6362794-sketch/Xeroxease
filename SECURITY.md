@@ -97,9 +97,10 @@ bytes" is "**we re-read the object afterwards and it matches what we authorized*
   and fails the row. `status` only reaches `COMPLETED` after that check, and
   `createOrder` selects `status = "COMPLETED"` — an unverified document cannot be ordered,
   priced, printed or downloaded (even by an admin).
-- Abandoned/expired intents are reaped by an explicit SUPER_ADMIN call
-  (`POST /api/admin/uploads/sweep`); the app has **no scheduler**, so un-reaped PENDING
-  rows and their objects persist until someone calls it.
+- Abandoned/expired intents, unordered documents and retained order documents are cleaned
+  up by `POST /api/admin/uploads/sweep` (SUPER_ADMIN session or the `CRON_SECRET` bearer for
+  a scheduler). The app has **no scheduler**, so until something calls it, un-reaped rows and
+  their objects persist.
 - `maxSize`/MIME are **not** enforceable inside a Supabase signed upload URL, so the
   bucket's own file-size/MIME settings are defence in depth, not the primary control.
 
@@ -163,7 +164,7 @@ stored or embedded (see `UPLOADS.md` §3).
 ## 10. Backup strategy
 
 - Supabase managed backups (verify schedule under Database → Backups) or scheduled `pg_dump`.
-- Storage bucket sync for uploaded documents; retention per configured policy.
+- Storage bucket sync for uploaded documents. Document deletion follows the policy in DATABASE.md ("Data retention"): 24 hours for unordered uploads, `retentionDays` after an order ends. Deletion is a scheduled job, not instant, and a bucket snapshot can still hold deleted objects until the snapshot ages out.
 - Reconciliation: `payment_events` against bank/UPI statements.
 
 ## 11. Residual risks and operator responsibilities
@@ -180,7 +181,7 @@ checklist** (things the code cannot enforce); 11.2 is what is simply not built y
 5. **`next/font/google` requires build-time network access.** The build fetches Inter from Google Fonts. In an air-gapped or egress-restricted CI runner the build fails; either allow egress to `fonts.googleapis.com` or self-host the font. `prisma generate` needs `binaries.prisma.sh` at build/install time for the same reason.
 6. **Reverse-proxy and function body limits.** The app rejects oversized uploads, but the platform must be configured to match. On a function host the ceiling is both ways — Vercel allows 4.5 MB per **request body and per response body** — which is why document bytes now travel browser ↔ storage and `GET /api/files/:id/download` answers with a 307 to a short-lived signed URL instead of streaming through the function. Self-hosted nginx needs `client_max_body_size` ≥ the limit you advertise. A deployment that re-routes downloads back through the app re-introduces the exact failure this exists to avoid.
 7. **Bucket-level limits are defence in depth, not the control.** A Supabase signed upload URL cannot carry `maxSize`/MIME restrictions, so the bucket's global file-size limit (Supabase Free: 50 MB) is what actually caps the *provider* side. Set it deliberately and mirror it in `STORAGE_PROVIDER_MAX_FILE_BYTES`; leaving them inconsistent only produces confusing 413s, it does not weaken authorization (the object is measured and signature-checked after every upload).
-8. **No scheduler exists, by design.** Abandoned `PENDING` upload rows and their objects are reaped only when `POST /api/admin/uploads/sweep` is called. Point the platform's cron at it (or remember it) or the bucket accumulates orphans; the same applies to retention purging and session sweeps.
+8. **The application has no internal scheduler.** `POST /api/admin/uploads/sweep` runs the upload cleanup: expired upload intents, unordered documents past 24 hours, and order documents past the retention period. Something outside the app must call it on a schedule, authenticating with `Authorization: Bearer $CRON_SECRET` (a Super Admin session also works for a manual run). If nothing calls it, orphaned objects and retained documents accumulate and the privacy policy is not being honoured. Session cleanup is separate and is not covered by this endpoint.
 9. **HTTPS/TLS** termination is your deployment platform's responsibility; HSTS is set in production but only matters behind TLS. There is no in-app force-HTTPS redirect.
 10. **Backups and retention** are the operator's responsibility. Never run `prisma migrate reset` or `prisma db push --force-reset` against production data.
 11. **CSRF** relies on `SameSite=Lax` cookies plus JSON-only state-changing endpoints. If a future endpoint accepts cross-origin form posts or `text/plain` bodies, add an explicit CSRF token. Note that the direct-upload PUT is *deliberately* cross-origin and is authorized by the provider's signed URL, not by the session cookie.
@@ -462,7 +463,7 @@ response; identical answers for "not yours" and "does not exist".
   uploaded what and when; it just cannot be replayed to complete an upload.
 
 **Operator actions required.** (1) Raise/set the bucket's global per-file limit and mirror it
-in `STORAGE_PROVIDER_MAX_FILE_BYTES`. (2) Schedule `POST /api/admin/uploads/sweep` — nothing
-else reaps abandoned intents. (3) Confirm public access on the bucket stays off
+in `STORAGE_PROVIDER_MAX_FILE_BYTES`. (2) Schedule `POST /api/admin/uploads/sweep` with `CRON_SECRET` — nothing
+else reaps abandoned or retained documents. (3) Confirm public access on the bucket stays off
 (the bucket must remain private — `UPLOADS.md` §4 and check 1 of §8.1). (4) Re-run the `UPLOADS.md` §8.1 manual checks after any
 Supabase plan change. See `DEPLOYMENT.md` §1a and `UPLOADS.md`.

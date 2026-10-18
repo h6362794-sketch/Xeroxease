@@ -297,6 +297,10 @@ model UploadedFile {
   analysisError String?  @map("analysis_error")
   analyzedAt    DateTime? @map("analyzed_at")
   createdAt     DateTime @default(now()) @map("created_at")
+  // Set once the stored object has been deleted (abandoned upload, student removal, or the
+  // retention policy). The row is kept for order history, but the document is never served
+  // again and is no longer counted against the uploader's quota. See src/server/document-lifecycle.ts.
+  purgedAt      DateTime? @map("purged_at")
 
   order   Order?  @relation(fields: [orderId], references: [id], onDelete: Cascade)
   uploader User   @relation(fields: [uploaderId], references: [id])

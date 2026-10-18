@@ -78,6 +78,8 @@ interface OrderableFile {
   orderId: string | null;
   /** Upload lifecycle state — `COMPLETED` means the stored bytes were verified. */
   status: string;
+  /** Set when the stored bytes were deleted (retention, abandonment). Such a file cannot be ordered. */
+  purgedAt?: Date | null;
 }
 
 export async function createOrder(input: CreateOrderInput) {
@@ -87,12 +89,15 @@ export async function createOrder(input: CreateOrderInput) {
   // write. Nothing is orderable unless this list is fully owned **and** verified.
   const files = (await prisma.uploadedFile.findMany({
     where: { id: { in: input.fileIds }, uploaderId: input.userId },
-    select: { id: true, uploaderId: true, pageCount: true, analysisStatus: true, orderId: true, status: true },
+    select: { id: true, uploaderId: true, pageCount: true, analysisStatus: true, orderId: true, status: true, purgedAt: true },
   })) as OrderableFile[];
   if (files.length !== new Set(input.fileIds).size) {
     throw new OrderError("One or more files could not be found or are not yours.", 403);
   }
   if (files.length === 0) throw new OrderError("Upload at least one document.", 400);
+  if (files.some((f) => f.purgedAt)) {
+    throw new OrderError("One or more documents have expired or were removed. Please upload them again.", 409);
+  }
 
   // Only a *verified* document may be printed. With direct-to-storage uploads the row
   // is created before the bytes exist, so `status` — not `analysisStatus` — is the
@@ -241,6 +246,8 @@ async function createOrderRow(params: {
             uploaderId: input.userId,
             orderId: null,
             status: "COMPLETED",
+            // A document claimed for purging is never linked (see document-lifecycle.ts).
+            purgedAt: null,
           },
           data: { orderId: o.id },
         });

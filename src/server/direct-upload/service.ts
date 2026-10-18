@@ -126,6 +126,7 @@ export async function createUploadIntent(params: {
     where: {
       uploaderId: params.actor.id,
       orderId: null,
+      purgedAt: null,
       OR: [{ intentExpiresAt: null }, { intentExpiresAt: { gt: new Date() } }],
     },
   });
@@ -306,7 +307,8 @@ export async function completeUploadIntent(params: {
   try {
     await prisma.$transaction(async (tx: any) => {
       const updated = (await tx.uploadedFile.updateMany({
-        where: { id: file.id, status: "PENDING", intentTokenHash: file.intentTokenHash },
+        // purgedAt: a document claimed for purging must never be verified and attached.
+        where: { id: file.id, status: "PENDING", intentTokenHash: file.intentTokenHash, purgedAt: null },
         data: {
           status: "COMPLETED",
           sizeBytes: decision.verifiedSizeBytes,
@@ -365,8 +367,18 @@ export async function abortUploadIntent(params: { actor: SessionActor; fileId: s
     throw new UploadServiceError("This document is already verified and remains attached to your order.", 409, "ALREADY_COMPLETED");
   }
 
+  // Remove the row only once its object is confirmed gone. If the storage delete fails, the row
+  // stays and expires into the cleanup job, which retries it; deleting the row first orphaned it.
   if (file.storageKey) {
-    await deleteFile(file.storageKey).catch(() => undefined);
+    try {
+      await deleteFile(file.storageKey);
+    } catch {
+      throw new UploadServiceError(
+        "We could not remove that document right now. It will be cleaned up automatically.",
+        503,
+        "STORAGE_UNAVAILABLE"
+      );
+    }
   }
   await prisma.uploadedFile.deleteMany({ where: { id: file.id, uploaderId: params.actor.id, status: "PENDING" } });
 
@@ -383,6 +395,8 @@ export async function abortUploadIntent(params: { actor: SessionActor; fileId: s
 export interface IntentSweepReport {
   released: number;
   attempted: number;
+  /** Rows whose object could not be deleted; they stay and are retried on the next run. */
+  failed: number;
   /** Present when the sweep stopped early; the rest are released on the next run. */
   cappedAt?: number;
 }
@@ -401,8 +415,18 @@ export async function releaseExpiredIntents(limit = 50): Promise<IntentSweepRepo
   });
   const rows = stale.slice(0, capped);
   let released = 0;
+  let failed = 0;
   for (const row of rows) {
-    if (row.storageKey) await deleteFile(row.storageKey).catch(() => undefined);
+    // The row goes only after its object is confirmed gone. A failed storage delete used to be
+    // swallowed and the row deleted anyway, which left the bytes with no record to retry from.
+    if (row.storageKey) {
+      try {
+        await deleteFile(row.storageKey);
+      } catch {
+        failed++;
+        continue;
+      }
+    }
     // Delete only the row, never the object an order may already reference: an order
     // can only attach COMPLETED files, so a PENDING row here is always orphan-safe.
     const res = (await prisma.uploadedFile.deleteMany({
@@ -418,8 +442,13 @@ export async function releaseExpiredIntents(limit = 50): Promise<IntentSweepRepo
       targetType: "FILE",
       // No targetId: a sweep is not about one row, and inventing an id would make the
       // audit trail look like it was.
-      metadata: { released, attempted: rows.length },
+      metadata: { released, attempted: rows.length, failed },
     });
   }
-  return { released, attempted: rows.length, ...(stale.length > capped ? { cappedAt: capped } : {}) };
+  return {
+    released,
+    attempted: rows.length,
+    failed,
+    ...(stale.length > capped ? { cappedAt: capped } : {}),
+  };
 }

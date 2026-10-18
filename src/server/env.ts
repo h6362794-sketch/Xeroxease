@@ -62,6 +62,13 @@ export const env = {
     return process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   },
   /**
+   * Bearer secret for the scheduled upload cleanup (POST /api/admin/uploads/sweep). Optional.
+   * Unset (or under 32 characters) means only a Super Admin session can run the sweep.
+   */
+  get CRON_SECRET() {
+    return process.env.CRON_SECRET || "";
+  },
+  /**
    * Number of reverse proxies in front of the app whose `X-Forwarded-For` entries
    * may be trusted. `getClientIp` reads the address that many hops from the right,
    * so anything an attacker prepends is ignored.

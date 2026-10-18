@@ -76,3 +76,9 @@ export const TRACKING_STEPS = [
 ] as const;
 
 export const RETENTION_DAYS_DEFAULT = 30;
+/**
+ * How long a document may sit uploaded but not attached to an order before the cleanup job
+ * deletes it. Students who abandon the wizard, or remove a file, lose the document after this.
+ * Not configurable on purpose: it is a published promise (see the privacy notice).
+ */
+export const UNATTACHED_UPLOAD_TTL_HOURS = 24;

@@ -520,7 +520,7 @@ describe("releaseExpiredIntents", () => {
       { id: "b", storageKey: "user-a/b.pdf", uploaderId: "user-a" },
     ]);
     const report = await service.releaseExpiredIntents(50);
-    expect(report).toEqual({ released: 2, attempted: 2 });
+    expect(report).toEqual({ released: 2, attempted: 2, failed: 0 });
     expect(deleteFile).toHaveBeenCalledTimes(2);
     expect(audit).toHaveBeenCalledTimes(1);
     expect(calls<{ where: Record<string, unknown> }>(db.uploadedFile.findMany)[0].where).toMatchObject({
@@ -535,7 +535,7 @@ describe("releaseExpiredIntents", () => {
       { id: "c", storageKey: "k3", uploaderId: "u" },
     ]);
     const report = await service.releaseExpiredIntents(2);
-    expect(report).toMatchObject({ released: 2, attempted: 2, cappedAt: 2 });
+    expect(report).toMatchObject({ released: 2, attempted: 2, failed: 0, cappedAt: 2 });
     expect(deleteFile).toHaveBeenCalledTimes(2);
   });
 
@@ -547,7 +547,21 @@ describe("releaseExpiredIntents", () => {
 
   it("does not audit when there was nothing to do", async () => {
     mock(db.uploadedFile.findMany).mockResolvedValueOnce([]);
-    expect(await service.releaseExpiredIntents()).toEqual({ released: 0, attempted: 0 });
+    expect(await service.releaseExpiredIntents()).toEqual({ released: 0, attempted: 0, failed: 0 });
     expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the row when its object cannot be deleted, and reports it as failed", async () => {
+    mock(db.uploadedFile.findMany).mockResolvedValueOnce([
+      { id: "a", storageKey: "user-a/a.pdf", uploaderId: "user-a" },
+      { id: "b", storageKey: "user-a/b.pdf", uploaderId: "user-a" },
+    ]);
+    mock(deleteFile).mockRejectedValueOnce(new Error("Storage delete failed (503)"));
+    const report = await service.releaseExpiredIntents(50);
+    expect(report).toEqual({ released: 1, attempted: 2, failed: 1 });
+    // The failing row must not be deleted: its bytes would have no record left to retry from.
+    const deletedIds = calls<{ where: { id: string } }>(db.uploadedFile.deleteMany).map((c) => c.where.id);
+    expect(deletedIds).toEqual(["b"]);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ failed: 1 }) }));
   });
 });

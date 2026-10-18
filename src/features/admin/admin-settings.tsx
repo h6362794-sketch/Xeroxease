@@ -185,7 +185,7 @@ export function AdminSettings() {
         <h2 className="font-bold text-white">Operations</h2>
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
-            <Label htmlFor="ret">Document retention after completion (days)</Label>
+            <Label htmlFor="ret">Document retention after an order completes, is cancelled or fails (days)</Label>
             <Input id="ret" type="number" min={1} max={3650} value={retentionDays} onChange={(e) => setRetentionDays(e.target.value)} />
           </div>
           <div>

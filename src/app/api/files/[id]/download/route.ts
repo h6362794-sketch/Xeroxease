@@ -40,7 +40,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
     const file = await prisma.uploadedFile.findUnique({
       where: { id },
-      select: { id: true, uploaderId: true, originalName: true, storageKey: true, status: true, mimeType: true },
+      select: { id: true, uploaderId: true, originalName: true, storageKey: true, status: true, mimeType: true, purgedAt: true },
     });
 
     const decision = authorizeDownload(file, { id: user.id, role: user.role }, isAdminRole);
@@ -49,6 +49,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return apiError(NOT_FOUND_MESSAGE, 404);
     }
     if (decision.file.status !== "COMPLETED") return apiError(NOT_FOUND_MESSAGE, 404);
+    // Checked after authorization, so only the owner or staff learn that the document existed.
+    if (file?.purgedAt) return apiError("This document has expired and was deleted under the retention policy.", 410);
     const storageKey = decision.file.storageKey;
     if (!storageKey) return apiError(NOT_FOUND_MESSAGE, 404);
 

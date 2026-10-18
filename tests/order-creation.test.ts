@@ -15,6 +15,8 @@ type FileRow = {
   orderId: string | null;
   /** Upload lifecycle status. `createOrder` only accepts "COMPLETED". */
   status: string;
+  /** Set when the document was purged; such a file must never link to an order. */
+  purgedAt?: Date | null;
 };
 
 let files: FileRow[] = [];
@@ -24,14 +26,19 @@ let orderSeq = 0;
 let staleRead = false;
 
 /** Shared conditional link: matches only rows still unattached, like the real predicate. */
-function linkFiles(where: { id: { in: string[] }; uploaderId: string; orderId: null; status: string }, orderId: string) {
+function linkFiles(
+  where: { id: { in: string[] }; uploaderId: string; orderId: null; status: string; purgedAt?: null },
+  orderId: string
+) {
   let count = 0;
   for (const f of files) {
     if (
       where.id.in.includes(f.id) &&
       f.uploaderId === where.uploaderId &&
       f.orderId === where.orderId &&
-      f.status === where.status
+      f.status === where.status &&
+      // `purgedAt: null` is the purge guard: a claimed or deleted document must never link.
+      (where.purgedAt === undefined || !f.purgedAt)
     ) {
       f.orderId = orderId;
       count++;
@@ -50,7 +57,7 @@ vi.mock("@/lib/prisma", () => ({
               args.where.id.in.includes(f.id) &&
               f.uploaderId === args.where.uploaderId
           )
-          .map((f) => (staleRead ? { ...f, orderId: null } : f)),
+          .map((f) => (staleRead ? { ...f, orderId: null, purgedAt: null } : f)),
     },
     order: {
       findFirst: async () => (orderSeq > 0 ? { orderNumber: `XE-2026-${String(orderSeq).padStart(6, "0")}` } : null),
@@ -201,6 +208,13 @@ describe("ownership and reuse", () => {
     await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
   });
 
+  it("refuses a document whose bytes were purged, before any price or order exists", async () => {
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 3, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null, purgedAt: new Date() }];
+    await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
+    expect(created).toHaveLength(0);
+    expect(files[0].orderId).toBeNull();
+  });
+
   it("rejects an empty file list", async () => {
     await expect(orders.createOrder({ ...baseInput, fileIds: [] })).rejects.toMatchObject({ status: 400 });
   });
@@ -231,6 +245,16 @@ describe("order numbers", () => {
 });
 
 describe("document linking is atomic (double-order race)", () => {
+  it("a purge that lands between the pre-check and the link stops the order, and leaves no order", async () => {
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 3, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null, purgedAt: new Date() }];
+    // The pre-check reads the document as still live (it raced the purge).
+    staleRead = true;
+    await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
+    staleRead = false;
+    expect(created).toHaveLength(0);
+    expect(files[0].orderId).toBeNull();
+  });
+
   it("a second order for a document another request just claimed is refused and leaves no order", async () => {
     files = [{ id: "file-1", uploaderId: USER, pageCount: 3, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
 

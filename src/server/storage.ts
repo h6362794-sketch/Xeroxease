@@ -437,6 +437,11 @@ export async function openStream(storageKey: string): Promise<StorageStream> {
   return createReadStream(localPath(storageKey));
 }
 
+/**
+ * Delete one stored object. Resolves when the object is gone, including when it was already
+ * gone. Rejects on any other failure, so callers never drop a database row while the bytes
+ * still exist (the previous best-effort version did exactly that).
+ */
 export async function deleteFile(storageKey: string): Promise<void> {
   assertBackend();
   if (env.STORAGE_BACKEND === "supabase") {
@@ -445,8 +450,9 @@ export async function deleteFile(storageKey: string): Promise<void> {
   }
   try {
     await unlink(localPath(storageKey));
-  } catch {
-    // best-effort
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return;
+    throw new StorageError("Local storage delete failed");
   }
 }
 

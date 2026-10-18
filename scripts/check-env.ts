@@ -82,6 +82,17 @@ const secret = value("SESSION_SECRET");
 add("SESSION_SECRET", "required", secret.length > 0, "Generate with: openssl rand -base64 32");
 add("SESSION_SECRET length >= 32", "required", secret.length >= 32, "Shorter secrets weaken session/HMAC security.");
 
+// Scheduled upload cleanup (POST /api/admin/uploads/sweep). Without it, retention is not enforced.
+const cron = value("CRON_SECRET");
+if (production) {
+  add(
+    "CRON_SECRET length >= 32",
+    "recommended",
+    cron.length >= 32,
+    "Needed for the scheduler to run the upload sweep (retention and cleanup). Generate with: openssl rand -base64 32"
+  );
+}
+
 const ttl = Number(value("SESSION_TTL_HOURS") || "24");
 add("SESSION_TTL_HOURS numeric", "required", Number.isFinite(ttl) && ttl > 0, "Positive number of hours.");
 

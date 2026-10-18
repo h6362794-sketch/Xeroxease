@@ -82,7 +82,7 @@ export async function POST(req: Request) {
 
     // Soft per-order file limit.
     const existingCount = await prisma.uploadedFile.count({
-      where: { uploaderId: user.id, orderId: null },
+      where: { uploaderId: user.id, orderId: null, purgedAt: null },
     });
     if (existingCount >= MAX_FILES_PER_ORDER) {
       return apiError(`You can attach up to ${MAX_FILES_PER_ORDER} files per order.`, 409);
