@@ -120,6 +120,13 @@ jobs:
       - name: Recovery-code concurrency (independent connections, PostgreSQL 16)
         run: npx vitest run tests/recovery-concurrency.pg.test.ts --reporter=verbose
 
+      # Direct-upload intents, completion, abort and expiry raced against this same disposable
+      # container. The file THROWS (not skips) when PG_INTEGRATION_TESTS=1 and DATABASE_URL is
+      # unset, so this step cannot pass without running its tests. See the file header for what
+      # the test does and does not prove.
+      - name: Direct-upload races (independent connections, PostgreSQL 16)
+        run: npx vitest run tests/direct-upload-races.pg.test.ts --reporter=verbose
+
   audit:
     name: Dependency audit (critical and high)
     runs-on: ubuntu-latest
