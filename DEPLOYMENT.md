@@ -154,6 +154,7 @@ the check.
 - [ ] Account recovery understood by staff: users self-serve at **Profile → Security**; users with no code are handled by a Super Admin issuing one from **Admin → Users** after in-person ID verification
 - [ ] Backups scheduled (DB + storage) and a restore tested
 - [ ] Retention policy configured (Settings → retention days)
+- [ ] Staging only: `DEPLOY_TARGET=staging` and `EXPECTED_SUPABASE_PROJECT_REF` set on the Preview scope; `npm run guard:target` passes; Production must not carry the staging pin
 - [ ] `CRON_SECRET` set (32+ characters) and the upload sweep scheduled; first scheduled run seen in Audit Logs with `trigger: schedule`
 
 ## Monitoring & operations

@@ -17,6 +17,7 @@ import { PrismaClient } from "@prisma/client";
 import argon2 from "argon2";
 import dotenv from "dotenv";
 import { resolveSeedPasswords } from "./seed-config";
+import { deployTargetInputFromEnv, evaluateDeployTarget } from "../src/server/deploy-target";
 
 // `tsx prisma/seed.ts` reads no env file on its own, so `npm run db:seed` used
 // to fail with "Environment variable not found: DATABASE_URL" unless the shell
@@ -29,6 +30,13 @@ const prisma = new PrismaClient();
 
 async function main() {
   console.log("Seeding XeroxEase development data…");
+
+  // Refuse to write into a database that is not the pinned deployment target (see guard:target).
+  const target = evaluateDeployTarget(deployTargetInputFromEnv(process.env));
+  if (target.problems.length > 0) {
+    for (const p of target.problems) console.error(`  - ${p}`);
+    throw new Error("Deployment target guard failed; nothing was seeded.");
+  }
 
   // Fail closed with an actionable, secret-free message when the
   // configuration would create an unsafe account (see seed-config.ts).

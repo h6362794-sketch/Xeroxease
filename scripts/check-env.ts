@@ -12,6 +12,7 @@
 import { existsSync } from "fs";
 import path from "path";
 import { diagnoseDatabaseConfig } from "../src/server/db-config";
+import { evaluateDeployTarget } from "../src/server/deploy-target";
 
 type Severity = "required" | "recommended";
 
@@ -91,6 +92,19 @@ if (production) {
     cron.length >= 32,
     "Needed for the scheduler to run the upload sweep (retention and cleanup). Generate with: openssl rand -base64 32"
   );
+}
+
+// Deployment-target pin (src/server/deploy-target.ts). Inactive unless one of the two variables is set.
+const pin = evaluateDeployTarget({
+  deployTarget: value("DEPLOY_TARGET"),
+  expectedProjectRef: value("EXPECTED_SUPABASE_PROJECT_REF"),
+  supabaseUrl: value("NEXT_PUBLIC_SUPABASE_URL"),
+  databaseUrl: value("DATABASE_URL"),
+  directUrl: value("DIRECT_URL"),
+});
+if (pin.active) {
+  if (pin.problems.length === 0) add("Deployment target pin", "required", true, "Database and Supabase URLs match the pinned project.");
+  for (const p of pin.problems) add("Deployment target pin", "required", false, p);
 }
 
 const ttl = Number(value("SESSION_TTL_HOURS") || "24");

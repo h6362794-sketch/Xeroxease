@@ -46,10 +46,15 @@ Costs are at the stated list prices (checked 2026-10; re-check before purchase).
    Staging is a preview of the `arena/89406898-xeroxease` branch, not production.
 5. **[USER] Set the environment variables** (section 3) on the **Preview** scope only.
    Do not set them on Production.
-6. **[USER] Run the config check** locally with the staging values loaded from your
-   secret manager into the shell, not typed into a file:
-   `npm run config:check`. It should pass for the production profile.
-7. **[USER] Apply migrations** to the staging database with the direct URL:
+6. **[USER] Pin the staging target, then run the checks** locally with the staging values
+   loaded from your secret manager into the shell, not typed into a file. Set
+   `DEPLOY_TARGET=staging` and `EXPECTED_SUPABASE_PROJECT_REF=<the staging project's ref>`
+   (the 20-letter ref in the project URL; not a secret). Then run `npm run guard:target`,
+   which must print that the URLs belong to the pinned project, and `npm run config:check`,
+   which should pass for the production profile. Do not continue past this step on a failure:
+   the guard means a copied production URL cannot be used by mistake.
+7. **[USER] Apply migrations** to the staging database with the direct URL. Run
+   `npm run guard:target` again first; it must pass in the same shell. Then
    `npx prisma migrate deploy`. Do **not** use `npm run db:migrate`
    (that is `prisma migrate dev`, which is for local development).
    Before the unique payment-reference migration runs, check the normalised duplicate
@@ -59,6 +64,7 @@ Costs are at the stated list prices (checked 2026-10; re-check before purchase).
    Super Admin, so the seed is the only bootstrap path. Run it with `NODE_ENV=production`
    so the seed refuses the published default passwords and skips demo orders:
    `NODE_ENV=production SEED_ADMIN_EMAIL=<email> SEED_ADMIN_PASSWORD=<strong, ≥12 chars, upper, lower, digit> npm run db:seed`
+   With the target pinned, the seed runs the same guard first and refuses to write on a mismatch.
    Enter the password from your secret manager. Do not put it in shell history.
    After first sign-in, create named admins through the Super Admin console and retire the
    seed account.
@@ -97,6 +103,7 @@ Required in staging unless marked optional.
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Only with `redis`. Upstash pricing not verified. |
 | `RATE_LIMIT_FAIL_OPEN` | Keep `false`. |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Seed only. Password mandatory with `NODE_ENV=production`. |
+| `DEPLOY_TARGET`, `EXPECTED_SUPABASE_PROJECT_REF` | Staging pin. `DEPLOY_TARGET=staging` and the project ref (not secret). The config check, `guard:target` and the seed refuse any URL not belonging to that project. Preview scope only. |
 | `SEED_STUDENT_EMAIL`, `SEED_STUDENT_PASSWORD` | Optional. The smoke test registers a fresh student. |
 
 Must **not** be set in staging: `ALLOW_DEV_SEED`, `ALLOW_EPHEMERAL_LOCAL_STORAGE`, `NODE_ENV`
