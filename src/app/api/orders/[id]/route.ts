@@ -2,6 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { requireUser, isAdminRole } from "@/server/auth";
 import { apiError, json, withErrorHandling } from "@/server/api-utils";
 
+/** Shown to a student in place of a desk status change's internal note. */
+const STUDENT_STATUS_CHANGE_MESSAGE = "The print desk updated this order.";
+
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const user = await requireUser();
@@ -50,8 +53,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           // to them while the payment is rejected. The raw paymentNote stays hidden.
           rejectionReason: order.paymentStatus === "PAYMENT_REJECTED" ? order.paymentNote : null,
           cancelledBy: null,
+          // A cancellation reason belongs to the student only when the student cancelled. A desk
+          // cancellation writes the desk's internal note here, so it is withheld.
+          cancelReason: order.cancelledBy === user.id ? order.cancelReason : null,
           collectionTokenHash: null,
-          events: order.events.map((e) => ({ ...e, actorId: null, actorRole: null })),
+          // A desk status change's note is internal (it is written for the desk, not the student).
+          // The student still sees that the status changed, with a generic line in place of the note.
+          // Other event messages (for example the desk's payment rejection reason) are student-facing.
+          events: order.events.map((e) => ({
+            ...e,
+            actorId: null,
+            actorRole: null,
+            message: e.type === "STATUS_CHANGE" ? STUDENT_STATUS_CHANGE_MESSAGE : e.message,
+          })),
         };
 
     return json({

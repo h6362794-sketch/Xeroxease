@@ -65,3 +65,80 @@ describe("GET /api/orders/[id] redaction", () => {
     expect(o.events[0].actorId).toBe("admin-42");
   });
 });
+
+/**
+ * Internal desk notes must not reach the owning student. These tests search the whole serialised
+ * response for the internal text, so a new field that copies a note is caught too.
+ */
+describe("internal admin notes are not visible to the student", () => {
+  const INTERNAL = "INTERNAL-DESK-NOTE-do-not-show-91";
+
+  async function getRaw(): Promise<string> {
+    const { GET } = await import("@/app/api/orders/[id]/route");
+    const res = await GET(new Request(`http://localhost/api/orders/${ORDER_ID}`), {
+      params: Promise.resolve({ id: ORDER_ID }),
+    });
+    return JSON.stringify(await res.json());
+  }
+
+  it("replaces a desk status-change note with a generic line", async () => {
+    row.events = [
+      { id: "e1", type: "STATUS_CHANGE", message: `Refund approved. ${INTERNAL}`, createdAt: new Date(), actorId: "admin-42", actorRole: "ADMIN", fromStatus: "PRINTING", toStatus: "CANCELLED" },
+    ];
+    const body = await getRaw();
+    expect(body).not.toContain(INTERNAL);
+    const parsed = JSON.parse(body);
+    expect(parsed.order.events[0].message).toBe("The print desk updated this order.");
+    // The status change itself is still shown to the student.
+    expect(parsed.order.events[0].toStatus).toBe("CANCELLED");
+  });
+
+  it("withholds a desk cancellation reason from the student", async () => {
+    row.status = "CANCELLED";
+    row.cancelledBy = "admin-42";
+    row.cancelReason = `Desk cancelled. ${INTERNAL}`;
+    const body = await getRaw();
+    expect(body).not.toContain(INTERNAL);
+    expect(JSON.parse(body).order.cancelReason).toBeNull();
+  });
+
+  it("keeps the student's own cancellation reason", async () => {
+    row.status = "CANCELLED";
+    row.cancelledBy = "student-1";
+    row.cancelReason = "Ordered by mistake";
+    const parsed = JSON.parse(await getRaw());
+    expect(parsed.order.cancelReason).toBe("Ordered by mistake");
+  });
+
+  it("keeps the desk's payment-rejection reason visible while the payment is rejected", async () => {
+    row.paymentStatus = "PAYMENT_REJECTED";
+    row.paymentNote = "Reference not found in statement";
+    row.events = [
+      { id: "e2", type: "PAYMENT_REJECTED", message: "Reference not found in statement", createdAt: new Date(), actorId: "admin-42", actorRole: "ADMIN" },
+    ];
+    const parsed = JSON.parse(await getRaw());
+    expect(parsed.order.rejectionReason).toBe("Reference not found in statement");
+    expect(parsed.order.events[0].message).toBe("Reference not found in statement");
+    expect(parsed.order.paymentNote).toBeNull();
+  });
+
+  it("never returns internal text anywhere in the student response", async () => {
+    row.adminNotes = INTERNAL;
+    row.paymentNote = INTERNAL;
+    row.cancelledBy = "admin-42";
+    row.cancelReason = INTERNAL;
+    row.events = [
+      { id: "e1", type: "STATUS_CHANGE", message: INTERNAL, createdAt: new Date(), actorId: "admin-42", actorRole: "ADMIN" },
+    ];
+    expect(await getRaw()).not.toContain(INTERNAL);
+  });
+
+  it("gives an admin the full note on the status-change event", async () => {
+    role = "ADMIN";
+    row.events = [
+      { id: "e1", type: "STATUS_CHANGE", message: INTERNAL, createdAt: new Date(), actorId: "admin-42", actorRole: "ADMIN" },
+    ];
+    const parsed = JSON.parse(await getRaw());
+    expect(parsed.order.events[0].message).toBe(INTERNAL);
+  });
+});
