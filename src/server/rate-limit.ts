@@ -32,35 +32,71 @@ export interface RateLimitResult {
 
 const REDIS_TIMEOUT_MS = 2_000;
 
-async function redisCommand<T>(body: unknown): Promise<T> {
-  const url = env.UPSTASH_REDIS_REST_URL;
+/**
+ * Any failure of the shared store: HTTP status, transport, a malformed reply, or an error for
+ * any single command. The message never includes the response body.
+ */
+class RateLimitStoreError extends Error {}
+
+/**
+ * Runs commands as one Upstash transaction (POST {base}/multi-exec, a JSON array of commands).
+ *
+ * The supported endpoint is /multi-exec. A bare POST of nested arrays to the database root is
+ * not a supported request form, and /pipeline is not atomic. Upstash reports a per-command
+ * failure inside an HTTP 200 as an element with `error`, and reports a discarded transaction as a
+ * single `{ error }` object. Both are treated as failures here, so they never read as a count of
+ * zero. Throws RateLimitStoreError on any failure; the caller decides fail-open or fail-closed.
+ */
+async function redisTransaction(commands: Array<Array<string | number>>): Promise<unknown[]> {
+  const base = env.UPSTASH_REDIS_REST_URL.replace(/\/+$/, "");
   const token = env.UPSTASH_REDIS_REST_TOKEN;
-  const res = await fetch(`${url}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(REDIS_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`rate-limit store returned ${res.status}`);
-  return (await res.json()) as T;
+  let res: Response;
+  try {
+    res = await fetch(`${base}/multi-exec`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(commands),
+      signal: AbortSignal.timeout(REDIS_TIMEOUT_MS),
+    });
+  } catch {
+    throw new RateLimitStoreError("transport failure reaching the shared store");
+  }
+  if (!res.ok) throw new RateLimitStoreError(`shared store returned HTTP ${res.status}`);
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    throw new RateLimitStoreError("shared store reply was not JSON");
+  }
+  if (!Array.isArray(body) || body.length !== commands.length) {
+    throw new RateLimitStoreError("shared store reply had an unexpected shape");
+  }
+  for (const item of body as unknown[]) {
+    if (typeof item !== "object" || item === null || "error" in item || !("result" in item)) {
+      throw new RateLimitStoreError("shared store reported a failed command");
+    }
+  }
+  return (body as Array<{ result: unknown }>).map((item) => item.result);
 }
 
 /**
- * Atomic INCR + EXPIRE via a Redis pipeline so the counter and its TTL are always
- * set together (a non-atomic pair can leave a key without a TTL — a permanent block).
+ * Atomic INCR + EXPIRE NX + TTL in one transaction, so the counter and its TTL are always
+ * set together (a non-atomic pair can leave a key without a TTL, a permanent block).
  */
 async function redisIncrement(key: string, windowSec: number): Promise<{ count: number; ttl: number }> {
-  const res = await redisCommand<Array<{ result?: unknown }>>([
+  const [incr, , ttlReply] = await redisTransaction([
     ["INCR", key],
-    ["EXPIRE", key, String(windowSec), "NX"],
+    ["EXPIRE", key, windowSec, "NX"],
     ["TTL", key],
   ]);
-  const count = Number(res?.[0]?.result ?? 0);
-  const ttl = Number(res?.[2]?.result ?? windowSec);
-  return { count, ttl: ttl > 0 ? ttl : windowSec };
+  const count = Number(incr);
+  if (!Number.isFinite(count)) throw new RateLimitStoreError("shared store returned a non-numeric count");
+  const ttl = Number(ttlReply);
+  return { count, ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : windowSec };
 }
 
 // ---------- Public API ----------
@@ -130,9 +166,10 @@ export async function rateLimitAsync(
     }
     return { ok: true, remaining: Math.max(0, limit - count), retryAfterSec: 0 };
   } catch (err) {
-    // Store outage. Fail closed by default so a broken limiter never turns into an
-    // open authentication endpoint.
-    console.error("[rate-limit] store error:", err instanceof Error ? err.message : err);
+    // Store outage, refusal, or bad reply. Fail closed by default so a broken limiter never
+    // turns into an open authentication endpoint. Only the error class and message are logged.
+    const reason = err instanceof RateLimitStoreError ? err.message : "unexpected error";
+    console.error("[rate-limit] store error:", reason);
     if (env.RATE_LIMIT_FAIL_OPEN) {
       return { ok: true, remaining: limit, retryAfterSec: 0 };
     }
