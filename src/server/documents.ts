@@ -47,9 +47,29 @@ export async function confirmFilePageCount(params: {
   if (file.analysisStatus === "PENDING" || file.analysisStatus === "PROCESSING") {
     throw new DocumentError("Analysis is still running. Please wait a moment.", 409);
   }
+  // Self-service confirmation is an exit from the review state ONLY. A count the
+  // parser produced (COMPLETED from DOCUMENT_PARSER) or an administrator set is what
+  // the order is priced from, so the student may not overwrite it. Previously this
+  // route accepted any count for any owned, unattached document, which let a 100-page
+  // PDF be ordered as 1 page. The same rule is enforced atomically in the WHERE clause
+  // below, so a concurrent analysis or order cannot race past the check.
+  const reviewable = {
+    OR: [
+      { analysisStatus: { in: ["NEEDS_REVIEW", "FAILED"] as const } },
+      // A student may correct their own earlier confirmation (a typo), which never
+      // widens trust: a USER_CONFIRMED source only ever exists on a review-state document.
+      { pageCountSource: "USER_CONFIRMED" as const },
+    ],
+  };
+  if (file.pageCountSource !== "USER_CONFIRMED" && !["NEEDS_REVIEW", "FAILED"].includes(file.analysisStatus)) {
+    throw new DocumentError(
+      "This page count was verified automatically and cannot be changed. Ask the print desk if it is wrong.",
+      409
+    );
+  }
 
-  const updated = await prisma.uploadedFile.update({
-    where: { id: file.id },
+  const { count } = await prisma.uploadedFile.updateMany({
+    where: { id: file.id, uploaderId: userId, orderId: null, ...reviewable },
     data: {
       pageCount,
       pageCountSource: "USER_CONFIRMED",
@@ -57,8 +77,14 @@ export async function confirmFilePageCount(params: {
       analysisError: null,
       analyzedAt: new Date(),
     },
-    select: { id: true, pageCount: true },
   });
+  if (count !== 1) {
+    throw new DocumentError(
+      "This document changed while you were editing it. Refresh and try again.",
+      409
+    );
+  }
+  const updated = { id: file.id, pageCount };
 
   await audit({
     actorId: userId,
