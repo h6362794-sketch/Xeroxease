@@ -22,13 +22,11 @@ describe("upload-sweep workflow stays on staging", () => {
     expect(code).not.toMatch(/environment:\s*production/);
   });
 
-  it("gates scheduled runs on SWEEP_ENABLED; only a manual run bypasses the variable", () => {
-    // The job runs when the event is a manual dispatch, or when SWEEP_ENABLED is "true".
-    // A scheduled run therefore needs the variable; a manual test does not, so the first run
-    // can be made by hand (DEPLOYMENT.md, step 4) before the timer is switched on.
-    expect(code).toMatch(
-      /if:\s*github\.event_name\s*==\s*'workflow_dispatch'\s*\|\|\s*vars\.SWEEP_ENABLED\s*==\s*'true'\s*$/m
-    );
+  it("keeps scheduler execution deferred: the job needs SWEEP_ENABLED for every trigger, manual included", () => {
+    // Owner decision: scheduler execution stays off until the retention review is complete. A manual
+    // "Run workflow" must not be a back door around that, so the variable gates the job itself.
+    expect(code).toMatch(/if:\s*vars\.SWEEP_ENABLED\s*==\s*'true'\s*$/m);
+    expect(code).not.toMatch(/workflow_dispatch'\s*\|\|/);
   });
 
   it("refuses any SWEEP_TARGET other than staging before it sends a request", () => {

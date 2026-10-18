@@ -8,9 +8,10 @@ name: Upload sweep (scheduled cleanup)
 #   * The script sends nothing unless the host of SWEEP_URL equals SWEEP_EXPECTED_HOST.
 #   * The receiving app refuses a scheduler whose X-Deploy-Target does not equal its own
 #     DEPLOY_TARGET (src/server/cron-auth.ts), so a mis-pointed URL is refused, and audited.
-#   * Scheduled runs do nothing until the repository variable SWEEP_ENABLED is "true". A manual
-#     run (workflow_dispatch) is allowed without it, so the first test can be made by hand.
-#     Either way it goes only to the staging environment.
+#   * Scheduler execution is DEFERRED. The job runs, for the timer AND for a manual "Run workflow",
+#     only when the repository variable SWEEP_ENABLED is "true". It stays off until the owner has
+#     completed the retention review and approved turning it on. Either way it goes only to the
+#     staging environment.
 #   * The request itself is made by scripts/run-upload-sweep.sh, which is tested in CI.
 #
 # Scheduled workflows run from the default branch only, and GitHub may pause scheduled workflows
@@ -32,7 +33,7 @@ concurrency:
 jobs:
   sweep:
     name: Run upload sweep (staging)
-    if: github.event_name == 'workflow_dispatch' || vars.SWEEP_ENABLED == 'true'
+    if: vars.SWEEP_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: staging
