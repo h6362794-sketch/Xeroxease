@@ -3,8 +3,9 @@ name: Upload sweep (scheduled cleanup)
 # Runs the document cleanup against ONE deployment: the one named by the `staging` GitHub
 # environment. Production is never targeted from this workflow.
 #
-#   * URL, target and secret come only from the `staging` environment (SWEEP_URL, SWEEP_TARGET,
-#     CRON_SECRET). Nothing here names a production host.
+#   * URL, target, approved host and secret come only from the `staging` environment (SWEEP_URL,
+#     SWEEP_TARGET, SWEEP_EXPECTED_HOST, CRON_SECRET). Nothing here names a production host.
+#   * The script sends nothing unless the host of SWEEP_URL equals SWEEP_EXPECTED_HOST.
 #   * The receiving app refuses a scheduler whose X-Deploy-Target does not equal its own
 #     DEPLOY_TARGET (src/server/cron-auth.ts), so a mis-pointed URL is refused, and audited.
 #   * Scheduled runs do nothing until the repository variable SWEEP_ENABLED is "true". A manual
@@ -42,6 +43,8 @@ jobs:
         env:
           SWEEP_URL: ${{ vars.SWEEP_URL }}
           SWEEP_TARGET: ${{ vars.SWEEP_TARGET }}
+          # The approved staging hostname. The script sends nothing unless SWEEP_URL's host equals it.
+          SWEEP_EXPECTED_HOST: ${{ vars.SWEEP_EXPECTED_HOST }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           # Optional: only if the staging deployment sits behind Vercel Deployment Protection.
           SWEEP_PROTECTION_BYPASS: ${{ secrets.SWEEP_PROTECTION_BYPASS }}

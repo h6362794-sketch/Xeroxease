@@ -41,6 +41,12 @@ describe("upload-sweep workflow stays on staging", () => {
     expect(block).toMatch(/exit 1/);
   });
 
+  it("passes the approved staging host into the script, from the staging environment only", () => {
+    expect(code).toMatch(/SWEEP_EXPECTED_HOST:\s*\$\{\{\s*vars\.SWEEP_EXPECTED_HOST\s*\}\}/);
+    // It must be a variable, not a literal, so the owner approves the host in the environment.
+    expect(code).not.toMatch(/SWEEP_EXPECTED_HOST:\s*(?!\$\{\{)\S/);
+  });
+
   it("names no production host, target or production secret in executable lines", () => {
     expect(code).not.toMatch(/production/i);
     expect(code).not.toMatch(/PROD/);

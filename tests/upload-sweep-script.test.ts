@@ -11,6 +11,8 @@ const run = promisify(execFile);
 const SCRIPT = path.resolve(__dirname, "../scripts/run-upload-sweep.sh");
 const SECRET = "scheduler-secret-0123456789abcdef-0123456789";
 const PATH_OK = "/api/admin/uploads/sweep";
+/** Placed in every response body. The script must never print it. */
+const BODY_MARKER = "BODY-MARKER-do-not-print-7f3a";
 
 interface Seen {
   method?: string;
@@ -46,10 +48,10 @@ beforeAll(async () => {
     const targetOk = req.headers["x-deploy-target"] === appTarget;
     if (mode === "forbidden" || !authed || !targetOk) {
       res.writeHead(403, { "content-type": "application/json" });
-      return res.end(JSON.stringify({ code: "SCHEDULER_TARGET_MISMATCH" }));
+      return res.end(JSON.stringify({ code: "SCHEDULER_TARGET_MISMATCH", detail: BODY_MARKER }));
     }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ released: 0, attempted: 0 }));
+    res.end(JSON.stringify({ released: 0, attempted: 0, detail: BODY_MARKER }));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   port = (server.address() as { port: number }).port;
@@ -64,6 +66,7 @@ function env(over: Record<string, string | undefined> = {}): Record<string, stri
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     SWEEP_URL: `http://127.0.0.1:${port}${PATH_OK}`,
+    SWEEP_EXPECTED_HOST: "127.0.0.1",
     SWEEP_TARGET: "staging",
     CRON_SECRET: SECRET,
     SWEEP_ALLOW_LOOPBACK_HTTP: "1",
@@ -94,8 +97,9 @@ describe("run-upload-sweep.sh", () => {
     expect(r.out).toContain("HTTP 200");
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ method: "POST", url: `${PATH_OK}?limit=50`, auth: `Bearer ${SECRET}`, target: "staging" });
-    // The secret and the target are never printed.
+    // The secret and the target are never printed, and neither is the response body.
     expect(r.out).not.toContain(SECRET);
+    expect(r.out).not.toContain(BODY_MARKER);
   });
 
   it("sends the Vercel automation bypass as a header when one is configured, and never prints it", async () => {
@@ -173,6 +177,54 @@ describe("run-upload-sweep.sh", () => {
   it("refuses an out-of-range limit", async () => {
     const r = await sweep({ SWEEP_LIMIT: "501" });
     expect(r.code).toBe(2);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("sends nothing to a host other than the approved one, even over https", async () => {
+    // The approved host is 127.0.0.1, so this URL is a different, unreachable host. Validation
+    // must refuse it (exit 2) before curl runs. A reached-but-failed request would exit 1.
+    const r = await sweep({
+      SWEEP_URL: "https://attacker.example.invalid/api/admin/uploads/sweep",
+      SWEEP_ALLOW_LOOPBACK_HTTP: undefined,
+    });
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Nothing was sent");
+    expect(r.out).not.toContain(SECRET);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("matches the host exactly: a subdomain or suffix of the approved host is refused", async () => {
+    for (const host of ["evil-127.0.0.1.example.invalid", "127.0.0.1.example.invalid", "xx127.0.0.1"]) {
+      const r = await sweep({
+        SWEEP_URL: `https://${host}/api/admin/uploads/sweep`,
+        SWEEP_EXPECTED_HOST: "127.0.0.1",
+        SWEEP_ALLOW_LOOPBACK_HTTP: undefined,
+      });
+      expect(r.code, host).toBe(2);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  it("refuses a userinfo trick that puts the approved host before an @", async () => {
+    const r = await sweep({
+      SWEEP_URL: "https://127.0.0.1@attacker.example.invalid/api/admin/uploads/sweep",
+      SWEEP_ALLOW_LOOPBACK_HTTP: undefined,
+    });
+    expect(r.code).toBe(2);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("refuses to run when no approved host is configured", async () => {
+    const r = await sweep({ SWEEP_EXPECTED_HOST: undefined });
+    expect(r.code).not.toBe(0);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("refuses an expected-host value that is not a bare hostname", async () => {
+    for (const bad of ["https://127.0.0.1", "127.0.0.1:8080", "*.example.com"]) {
+      const r = await sweep({ SWEEP_EXPECTED_HOST: bad });
+      expect(r.code, bad).toBe(2);
+    }
     expect(seen).toHaveLength(0);
   });
 
