@@ -235,7 +235,9 @@ model Order {
   paymentStatus PaymentStatus @default(PAYMENT_PENDING) @map("payment_status")
 
   // Payment proof
-  paymentRef   String?  @map("payment_ref")
+  // Normalised (see src/server/payment-reference.ts). Unique: one payment reference
+  // identifies one order, so it cannot be presented against several orders.
+  paymentRef   String?  @unique @map("payment_ref")
   paymentProofAt DateTime? @map("payment_proof_at")
   paymentVerifiedBy String? @map("payment_verified_by")
   paymentVerifiedAt DateTime? @map("payment_verified_at")

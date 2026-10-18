@@ -8,6 +8,7 @@ import {
   PAPER_SIZES,
   PRINT_SIDES,
 } from "@/lib/constants";
+import { isValidPaymentReference, normalizePaymentReference } from "./payment-reference";
 
 const password = z
   .string()
@@ -86,7 +87,13 @@ export const orderConfigSchema = z.object({
 });
 
 export const paymentSubmitSchema = z.object({
-  reference: z.string().trim().min(4, "Reference too short").max(64),
+  reference: z
+    .string()
+    .trim()
+    .min(4, "Reference too short")
+    .max(64)
+    .transform(normalizePaymentReference)
+    .refine(isValidPaymentReference, "Payment reference may contain only letters, digits and - _ / ."),
 });
 
 export const feedbackSchema = z.object({

@@ -5,6 +5,8 @@ import { RATE_LIMITS } from "@/server/rate-limit";
 import { paymentSubmitSchema } from "@/server/validation";
 import { audit } from "@/server/audit";
 import { notify, NOTIFY } from "@/server/notifications";
+import { OrderError } from "@/server/orders";
+import { DUPLICATE_REFERENCE_MESSAGE, isPaymentReferenceConflict } from "@/server/payment-reference";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
@@ -32,38 +34,60 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return apiError("Payment cannot be submitted in the current order state.", 409);
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: order.id },
-        data: {
-          paymentStatus: "PAYMENT_UNDER_REVIEW",
-          status: "PAYMENT_UNDER_REVIEW",
-          paymentRef: data.reference,
-          paymentProofAt: new Date(),
-        },
+    // Conditional write: the payment state is re-checked inside the same statement that
+    // changes it, so two concurrent submissions cannot both move the order into review.
+    // The reference is unique across orders (see migration 20261018000000); a reuse is
+    // rejected here with a clear message and, if a race beats this check, by the index.
+    try {
+      await prisma.$transaction(async (tx) => {
+        const reused = await tx.order.findFirst({
+          where: { paymentRef: data.reference, NOT: { id: order.id } },
+          select: { id: true },
+        });
+        if (reused) throw new OrderError(DUPLICATE_REFERENCE_MESSAGE, 409);
+
+        const { count } = await tx.order.updateMany({
+          where: {
+            id: order.id,
+            userId: user.id,
+            paymentStatus: { in: ["PAYMENT_PENDING", "PAYMENT_REJECTED", "PAYMENT_FAILED"] },
+          },
+          data: {
+            paymentStatus: "PAYMENT_UNDER_REVIEW",
+            status: "PAYMENT_UNDER_REVIEW",
+            paymentRef: data.reference,
+            paymentProofAt: new Date(),
+          },
+        });
+        if (count !== 1) {
+          throw new OrderError("Payment state changed while you were submitting. Refresh and try again.", 409);
+        }
+        await tx.paymentEvent.create({
+          data: {
+            orderId: order.id,
+            actorId: user.id,
+            actorRole: "STUDENT",
+            type: "SUBMITTED",
+            amount: order.totalAmount,
+            reference: data.reference,
+          },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: order.id,
+            type: "PAYMENT_SUBMITTED",
+            fromStatus: order.status,
+            toStatus: "PAYMENT_UNDER_REVIEW",
+            message: "Payment reference submitted by student.",
+            actorId: user.id,
+            actorRole: "STUDENT",
+          },
+        });
       });
-      await tx.paymentEvent.create({
-        data: {
-          orderId: order.id,
-          actorId: user.id,
-          actorRole: "STUDENT",
-          type: "SUBMITTED",
-          amount: order.totalAmount,
-          reference: data.reference,
-        },
-      });
-      await tx.orderEvent.create({
-        data: {
-          orderId: order.id,
-          type: "PAYMENT_SUBMITTED",
-          fromStatus: order.status,
-          toStatus: "PAYMENT_UNDER_REVIEW",
-          message: "Payment reference submitted by student.",
-          actorId: user.id,
-          actorRole: "STUDENT",
-        },
-      });
-    });
+    } catch (err) {
+      if (isPaymentReferenceConflict(err)) return apiError(DUPLICATE_REFERENCE_MESSAGE, 409);
+      throw err;
+    }
 
     await NOTIFY.paymentSubmitted(user.id, order.orderNumber, order.id);
     await audit({

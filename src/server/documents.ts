@@ -53,15 +53,11 @@ export async function confirmFilePageCount(params: {
   // route accepted any count for any owned, unattached document, which let a 100-page
   // PDF be ordered as 1 page. The same rule is enforced atomically in the WHERE clause
   // below, so a concurrent analysis or order cannot race past the check.
-  const reviewable = {
-    OR: [
-      { analysisStatus: { in: ["NEEDS_REVIEW", "FAILED"] as const } },
-      // A student may correct their own earlier confirmation (a typo), which never
-      // widens trust: a USER_CONFIRMED source only ever exists on a review-state document.
-      { pageCountSource: "USER_CONFIRMED" as const },
-    ],
-  };
-  if (file.pageCountSource !== "USER_CONFIRMED" && !["NEEDS_REVIEW", "FAILED"].includes(file.analysisStatus)) {
+  const inReview = file.analysisStatus === "NEEDS_REVIEW" || file.analysisStatus === "FAILED";
+  // A student may correct their own earlier confirmation (a typo). This never widens
+  // trust: a USER_CONFIRMED source only ever exists on a review-state document.
+  const correctingOwnConfirmation = file.pageCountSource === "USER_CONFIRMED";
+  if (!inReview && !correctingOwnConfirmation) {
     throw new DocumentError(
       "This page count was verified automatically and cannot be changed. Ask the print desk if it is wrong.",
       409
@@ -69,7 +65,15 @@ export async function confirmFilePageCount(params: {
   }
 
   const { count } = await prisma.uploadedFile.updateMany({
-    where: { id: file.id, uploaderId: userId, orderId: null, ...reviewable },
+    where: {
+      id: file.id,
+      uploaderId: userId,
+      orderId: null,
+      OR: [
+        { analysisStatus: { in: ["NEEDS_REVIEW", "FAILED"] } },
+        { pageCountSource: "USER_CONFIRMED" },
+      ],
+    },
     data: {
       pageCount,
       pageCountSource: "USER_CONFIRMED",
