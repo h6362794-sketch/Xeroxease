@@ -124,19 +124,48 @@ describe("purgeAbandonedUploads", () => {
     ]);
   });
 
-  it("purges each candidate through the claim path and clears only old leftover claims", async () => {
+  it("purges each candidate through the claim path", async () => {
     prisma.uploadedFile.findMany.mockResolvedValueOnce([{ id: "x" }, { id: "y" }]);
     prisma.uploadedFile.findFirst.mockResolvedValue({ storageKey: "k" });
-    prisma.uploadedFile.deleteMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 3 });
-
     const report = await lifecycle.purgeAbandonedUploads(NOW, 25);
-    expect(report).toEqual({ attempted: 2, purged: 2, failed: 0, leftoversRemoved: 3 });
+    expect(report).toEqual({ attempted: 2, purged: 2, failed: 0, leftoversRemoved: 0 });
+  });
 
-    const leftover = prisma.uploadedFile.deleteMany.mock.calls.at(-1)?.[0].where;
-    expect(leftover.orderId).toBeNull();
-    expect(leftover.purgedAt.lt.getTime()).toBe(NOW.getTime() - 24 * HOUR);
-    // A claim made moments ago is in progress and must not be swept as a leftover.
-    expect(leftover.purgedAt.not).toBeNull();
+  it("a leftover claim (run stopped after claiming) deletes its object before its row", async () => {
+    const claimedAt = new Date("2026-10-17T00:00:00.000Z"); // older than the 24 h cutoff
+    prisma.uploadedFile.findMany
+      .mockResolvedValueOnce([]) // abandoned candidates
+      .mockResolvedValueOnce([{ id: "stuck", storageKey: "user-a/stuck.pdf", purgedAt: claimedAt }]); // leftovers
+    const report = await lifecycle.purgeAbandonedUploads(NOW, 25);
+
+    // The object still exists in this case, so it must be deleted before the row is removed.
+    expect(deleteFile).toHaveBeenCalledWith("user-a/stuck.pdf");
+    expect(deleteFile.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.uploadedFile.deleteMany.mock.invocationCallOrder[0]
+    );
+    expect(prisma.uploadedFile.deleteMany).toHaveBeenCalledWith({
+      where: { id: "stuck", orderId: null, purgedAt: claimedAt },
+    });
+    expect(report.leftoversRemoved).toBe(1);
+  });
+
+  it("keeps a leftover row whose object cannot be deleted, and reports it", async () => {
+    const claimedAt = new Date("2026-10-17T00:00:00.000Z");
+    prisma.uploadedFile.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "stuck", storageKey: "user-a/stuck.pdf", purgedAt: claimedAt }]);
+    deleteFile.mockRejectedValueOnce(new Error("Storage delete failed (500)"));
+    const report = await lifecycle.purgeAbandonedUploads(NOW, 25);
+    expect(prisma.uploadedFile.deleteMany).not.toHaveBeenCalled();
+    expect(report).toMatchObject({ leftoversRemoved: 0, failed: 1 });
+  });
+
+  it("only looks at leftovers older than the TTL, so an in-progress claim is never swept", async () => {
+    await lifecycle.purgeAbandonedUploads(NOW, 25);
+    const leftoverQuery = prisma.uploadedFile.findMany.mock.calls[1][0].where;
+    expect(leftoverQuery.orderId).toBeNull();
+    expect(leftoverQuery.purgedAt.lt.getTime()).toBe(NOW.getTime() - 24 * HOUR);
+    expect(leftoverQuery.purgedAt.not).toBeNull();
   });
 });
 
@@ -187,7 +216,8 @@ describe("runUploadSweep", () => {
   it("runs intent release only when direct uploads are enabled, but always runs the purges", async () => {
     await lifecycle.runUploadSweep({ limit: 20, intents: false }, NOW);
     expect(releaseExpiredIntents).not.toHaveBeenCalled();
-    expect(prisma.uploadedFile.findMany).toHaveBeenCalledTimes(2);
+    // abandoned candidates, leftover claims, retention candidates
+    expect(prisma.uploadedFile.findMany).toHaveBeenCalledTimes(3);
 
     await lifecycle.runUploadSweep({ limit: 20, intents: true }, NOW);
     expect(releaseExpiredIntents).toHaveBeenCalledWith(20);

@@ -6,25 +6,35 @@
 //   * deletes order documents past the retention period (Settings → retention days).
 //
 // Callers: a Super Admin session (manual run), or a scheduler presenting
-// `Authorization: Bearer <CRON_SECRET>` (see src/server/cron-auth.ts). The application runs no
-// scheduler of its own, so one of these must call it on a schedule (DEPLOYMENT.md).
+//   Authorization: Bearer <CRON_SECRET>  and  X-Deploy-Target: <this deployment's DEPLOY_TARGET>
+// (see src/server/cron-auth.ts). The application runs no scheduler of its own (DEPLOYMENT.md).
 import { requireRole } from "@/server/auth";
 import { apiError, enforceRateLimit, json, withErrorHandling } from "@/server/api-utils";
 import { RATE_LIMITS } from "@/server/rate-limit";
 import { audit } from "@/server/audit";
 import { runUploadSweep } from "@/server/document-lifecycle";
 import { directUploadsSupported } from "@/server/direct-upload/capability";
-import { isCronRequest } from "@/server/cron-auth";
+import { schedulerState } from "@/server/cron-auth";
+import { env } from "@/server/env";
 
 const MAX_LIMIT = 500;
 const DEFAULT_LIMIT = 50;
 
 export async function POST(req: Request) {
   return withErrorHandling(async () => {
-    const scheduled = isCronRequest(req);
-    const actor = scheduled ? null : await requireRole("SUPER_ADMIN");
-    const limited = await enforceRateLimit(req, RATE_LIMITS.admin, "admin-uploads-sweep", actor?.id);
+    // Rate limit first, by IP, so that unauthenticated probes are counted as well as runs.
+    const limited = await enforceRateLimit(req, RATE_LIMITS.admin, "admin-uploads-sweep");
     if (limited) return limited;
+
+    const state = schedulerState(req);
+    if (state === "refused") {
+      // A valid scheduler secret for another deployment. Refused without any write: the scheduler's
+      // own run fails (HTTP 403, code SCHEDULER_TARGET_MISMATCH), which is where an operator sees it.
+      return apiError("This scheduler is not configured for this deployment.", 403, "SCHEDULER_TARGET_MISMATCH");
+    }
+
+    const scheduled = state === "scheduler";
+    const actor = scheduled ? null : await requireRole("SUPER_ADMIN");
 
     const url = new URL(req.url);
     const raw = url.searchParams.get("limit");
@@ -43,7 +53,7 @@ export async function POST(req: Request) {
       actorRole: actor?.role ?? "SYSTEM",
       action: "UPLOAD_INTENTS_SWEEP",
       targetType: "SETTINGS",
-      metadata: { ...report, trigger: scheduled ? "schedule" : "manual" },
+      metadata: { ...report, trigger: scheduled ? "schedule" : "manual", deployTarget: env.DEPLOY_TARGET || "unset" },
     });
     return json(report);
   });

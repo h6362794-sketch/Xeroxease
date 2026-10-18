@@ -96,13 +96,35 @@ export async function purgeAbandonedUploads(now: Date, limit: number): Promise<U
     else if (outcome === "failed") failed++;
   }
 
-  // Rows whose object was deleted but whose row removal failed on an earlier run. They hold no
-  // bytes and can never be attached, so they only need to be cleared.
-  const leftovers = await prisma.uploadedFile.deleteMany({
+  // Claims left behind by a run that stopped between claiming a row and deleting its object
+  // (a timeout or crash). The object may still exist, so it is deleted again here before the
+  // row goes. Removing the row first would leave the bytes in storage with no record to retry from.
+  const leftovers = await prisma.uploadedFile.findMany({
     where: { orderId: null, purgedAt: { not: null, lt: cutoff } },
+    select: { id: true, storageKey: true, purgedAt: true },
+    take: limit,
   });
+  let leftoversRemoved = 0;
+  let leftoversFailed = 0;
+  for (const row of leftovers) {
+    try {
+      await deleteFile(row.storageKey);
+    } catch {
+      leftoversFailed++;
+      continue; // row kept; the next run retries it
+    }
+    const res = (await prisma.uploadedFile.deleteMany({
+      where: { id: row.id, orderId: null, purgedAt: row.purgedAt },
+    })) as { count: number };
+    leftoversRemoved += res.count;
+  }
 
-  return { attempted: stale.length, purged, failed, leftoversRemoved: leftovers.count };
+  return {
+    attempted: stale.length,
+    purged,
+    failed: failed + leftoversFailed,
+    leftoversRemoved,
+  };
 }
 
 export interface RetentionReport {

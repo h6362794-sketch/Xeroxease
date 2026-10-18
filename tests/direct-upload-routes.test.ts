@@ -19,6 +19,8 @@ type EnvOverrides = Record<string, unknown>;
 let envOverrides: EnvOverrides = {};
 
 let session: { id: string; role: string } | null = { id: OWNER, role: "STUDENT" };
+/** Switch for the rate-limit mock: false makes every bucket refuse. */
+let rateLimitOk = true;
 let dbFile: Record<string, unknown> | null = null;
 let openStream: ReturnType<typeof vi.fn>;
 let createSignedDownloadUrl: ReturnType<typeof vi.fn>;
@@ -110,7 +112,7 @@ async function load() {
       download: { limit: 120, windowMs: 600_000 },
       admin: { limit: 120, windowMs: 60_000 },
     },
-    rateLimitAsync: vi.fn(async () => ({ ok: true, remaining: 99 })),
+    rateLimitAsync: vi.fn(async () => ({ ok: rateLimitOk, remaining: rateLimitOk ? 99 : 0, retryAfterSec: 60 })),
   }));
   vi.doMock("@/lib/prisma", () => ({
     prisma: {
@@ -154,6 +156,7 @@ async function load() {
 
 beforeEach(async () => {
   envOverrides = {};
+  rateLimitOk = true;
   session = { id: OWNER, role: "STUDENT" };
   dbFile = null;
   await load();
@@ -397,17 +400,61 @@ describe("POST /api/admin/uploads/sweep", () => {
     expect(runUploadSweep).toHaveBeenCalledWith({ limit: 50, intents: false });
   });
 
-  it("accepts the scheduler secret in place of a session, and records the trigger", async () => {
+  it("accepts the scheduler secret for this deployment in place of a session, and records the trigger", async () => {
     session = null;
     envOverrides.CRON_SECRET = "cron-secret-0123456789abcdef-0123456789";
+    envOverrides.DEPLOY_TARGET = "staging";
     await load();
     const res = await routes.sweep.POST(
-      post({}, "/api/admin/uploads/sweep", { authorization: "Bearer cron-secret-0123456789abcdef-0123456789" })
+      post({}, "/api/admin/uploads/sweep", {
+        authorization: "Bearer cron-secret-0123456789abcdef-0123456789",
+        "x-deploy-target": "staging",
+      })
     );
     expect(res.status).toBe(200);
     expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({ actorId: null, actorRole: "SYSTEM", metadata: expect.objectContaining({ trigger: "schedule" }) })
     );
+  });
+
+  it("refuses a valid scheduler secret that names another deployment, and audits the refusal", async () => {
+    session = null;
+    envOverrides.CRON_SECRET = "cron-secret-0123456789abcdef-0123456789";
+    envOverrides.DEPLOY_TARGET = "production";
+    await load();
+    const res = await routes.sweep.POST(
+      post({}, "/api/admin/uploads/sweep", {
+        authorization: "Bearer cron-secret-0123456789abcdef-0123456789",
+        "x-deploy-target": "staging",
+      })
+    );
+    expect(res.status).toBe(403);
+    expect((await body(res)).code).toBe("SCHEDULER_TARGET_MISMATCH");
+    expect(runUploadSweep).not.toHaveBeenCalled();
+    // A refusal performs no write (the scheduler's run fails instead).
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a scheduler secret on a deployment with no DEPLOY_TARGET, since it cannot be matched", async () => {
+    session = null;
+    envOverrides.CRON_SECRET = "cron-secret-0123456789abcdef-0123456789";
+    await load();
+    const res = await routes.sweep.POST(
+      post({}, "/api/admin/uploads/sweep", {
+        authorization: "Bearer cron-secret-0123456789abcdef-0123456789",
+        "x-deploy-target": "staging",
+      })
+    );
+    expect(res.status).toBe(403);
+    expect(runUploadSweep).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits sweep attempts before any authentication, so probes are throttled too", async () => {
+    session = null;
+    rateLimitOk = false;
+    const res = await routes.sweep.POST(post({}, "/api/admin/uploads/sweep", { authorization: "Bearer nope" }));
+    expect(res.status).toBe(429);
+    expect(runUploadSweep).not.toHaveBeenCalled();
   });
 
   it("rejects a wrong scheduler secret, and never treats a short one as valid", async () => {

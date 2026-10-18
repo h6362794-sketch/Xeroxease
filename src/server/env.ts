@@ -69,6 +69,13 @@ export const env = {
     return process.env.CRON_SECRET || "";
   },
   /**
+   * This deployment's target (`staging` or `production`), lower-cased. A scheduled sweep is
+   * honoured only when its `X-Deploy-Target` header matches this value (see cron-auth.ts).
+   */
+  get DEPLOY_TARGET() {
+    return (process.env.DEPLOY_TARGET || "").trim().toLowerCase();
+  },
+  /**
    * Number of reverse proxies in front of the app whose `X-Forwarded-For` entries
    * may be trusted. `getClientIp` reads the address that many hops from the right,
    * so anything an attacker prepends is ignored.
