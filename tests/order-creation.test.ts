@@ -24,21 +24,35 @@ let created: any[] = [];
 let orderSeq = 0;
 /** When true, the pre-check reads a stale snapshot (as a concurrent request would). */
 let staleRead = false;
+/** When set, the pre-check reads these fields instead of the stored row (a count changed later). */
+let staleSnapshot: Partial<FileRow> | null = null;
 
 /** Shared conditional link: matches only rows still unattached, like the real predicate. */
 function linkFiles(
-  where: { id: { in: string[] }; uploaderId: string; orderId: null; status: string; purgedAt?: null },
+  where: {
+    id: { in: string[] } | string;
+    uploaderId: string;
+    orderId: null;
+    status: string;
+    purgedAt?: null;
+    analysisStatus?: string;
+    pageCount?: number | null;
+  },
   orderId: string
 ) {
   let count = 0;
   for (const f of files) {
+    const ids = typeof where.id === "string" ? [where.id] : where.id.in;
     if (
-      where.id.in.includes(f.id) &&
+      ids.includes(f.id) &&
       f.uploaderId === where.uploaderId &&
       f.orderId === where.orderId &&
       f.status === where.status &&
       // `purgedAt: null` is the purge guard: a claimed or deleted document must never link.
-      (where.purgedAt === undefined || !f.purgedAt)
+      (where.purgedAt === undefined || !f.purgedAt) &&
+      // The priced state: a count or status changed since pricing must not link.
+      (where.analysisStatus === undefined || f.analysisStatus === where.analysisStatus) &&
+      (where.pageCount === undefined || f.pageCount === where.pageCount)
     ) {
       f.orderId = orderId;
       count++;
@@ -57,7 +71,10 @@ vi.mock("@/lib/prisma", () => ({
               args.where.id.in.includes(f.id) &&
               f.uploaderId === args.where.uploaderId
           )
-          .map((f) => (staleRead ? { ...f, orderId: null, purgedAt: null } : f)),
+          .map((f) => {
+            if (staleSnapshot) return { ...f, ...staleSnapshot };
+            return staleRead ? { ...f, orderId: null, purgedAt: null } : f;
+          }),
     },
     order: {
       findFirst: async () => (orderSeq > 0 ? { orderNumber: `XE-2026-${String(orderSeq).padStart(6, "0")}` } : null),
@@ -152,11 +169,23 @@ beforeEach(async () => {
   created = [];
   orderSeq = 0;
   staleRead = false;
+  staleSnapshot = null;
   vi.resetModules();
   orders = await import("@/server/orders");
 });
 
 describe("page-count verification before pricing", () => {
+  it("refuses the order when a page count changes between pricing and linking", async () => {
+    // Priced from a 10-page snapshot; the stored row has since been re-counted to 99.
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 99, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
+    staleSnapshot = { pageCount: 10 };
+    await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
+    staleSnapshot = null;
+    expect(created).toHaveLength(0);
+    expect(files[0].orderId).toBeNull();
+    expect(files[0].pageCount).toBe(99);
+  });
+
   it("rejects a NEEDS_REVIEW document even when a pageCount estimate exists", async () => {
     files = [{ id: "file-1", uploaderId: USER, pageCount: 42, analysisStatus: "NEEDS_REVIEW", status: "COMPLETED", orderId: null }];
     await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });

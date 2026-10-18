@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
+import type { AnalysisStatus, Prisma } from "@prisma/client";
 import { calculatePrice, computeSheets } from "./pricing";
 import { parsePageSelection } from "./page-selection";
 import { canActorChangeStatus, canStudentCancelIn, isTransitionAllowed } from "@/lib/order-status";
@@ -73,7 +73,7 @@ function aggregatePages(
 interface OrderableFile {
   id: string;
   pageCount: number | null;
-  analysisStatus: string;
+  analysisStatus: AnalysisStatus;
   orderId: string | null;
   /** Upload lifecycle state — `COMPLETED` means the stored bytes were verified. */
   status: string;
@@ -239,17 +239,26 @@ async function createOrderRow(params: {
         // could both pass it and both connect the same file, silently moving it off the
         // first order. The predicate `orderId: null` makes the second writer match nothing:
         // count !== files.length rolls back the whole order.
-        const { count: linked } = await tx.uploadedFile.updateMany({
-          where: {
-            id: { in: files.map((f) => f.id) },
-            uploaderId: input.userId,
-            orderId: null,
-            status: "COMPLETED",
-            // A document claimed for purging is never linked (see document-lifecycle.ts).
-            purgedAt: null,
-          },
-          data: { orderId: o.id },
-        });
+        // Each file is linked only if it still has the state and page count the price was
+        // computed from. The analysis route can change both after the pre-check above, and a
+        // changed count must refuse the order rather than be billed as the old one.
+        let linked = 0;
+        for (const f of files) {
+          const { count } = await tx.uploadedFile.updateMany({
+            where: {
+              id: f.id,
+              uploaderId: input.userId,
+              orderId: null,
+              status: "COMPLETED",
+              // A document claimed for purging is never linked (see document-lifecycle.ts).
+              purgedAt: null,
+              analysisStatus: f.analysisStatus,
+              pageCount: f.pageCount,
+            },
+            data: { orderId: o.id },
+          });
+          linked += count;
+        }
         if (linked !== files.length) {
           throw new OrderError("One or more documents are already attached to an order.", 409);
         }
