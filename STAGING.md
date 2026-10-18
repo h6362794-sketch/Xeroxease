@@ -241,7 +241,8 @@ printf 'Authorization: Bearer %s\nX-Deploy-Target: production\n' "$CRON_SECRET" 
 Expect `403`. This proves a production-targeted scheduler cannot run against staging.
 
 **C2 — Scheduled run succeeds.** GitHub → Actions → "Upload sweep (scheduled cleanup)" →
-Run workflow. Expect a green run with `upload-sweep: HTTP 200`, and an audit entry
+Run workflow (available only once the workflow is on `main`; see B12). A manual run does not need
+`SWEEP_ENABLED`; the timer does. Expect a green run with `upload-sweep: HTTP 200`, and an audit entry
 `UPLOAD_INTENTS_SWEEP` with `trigger: schedule` and `deployTarget: staging`. The app records
 every call made with the scheduler credential as `schedule`, whether the workflow was started by
 the timer or by hand.
@@ -309,6 +310,8 @@ staging or in a browser. The staging run in section 4 is the verification.
 | B9 | A collected order whose student cannot present the code had no completion path. | **Fixed in code** (readiness round 2): Super Admin override with reason, identity check, typed order number, and audit in the same transaction. Procedure: SECURITY.md §6.1. Check: S8. |
 | B10 | Scheduled cleanup could delete a row whose object still existed (after a crash between claim and delete). | **Fixed in code** (readiness round 2). Covered by a unit test. Not seen on a real database. |
 | B11 | Retention and cleanup were only partly tested against real time (24 h and 1 day). | Deferred. C3 and C5 need real elapsed time. |
+| B12 | The scheduler workflow (`upload-sweep.yml`) is not on `main`, so GitHub offers neither "Run workflow" nor the timer. C2 cannot run until the file reaches the default branch. | **Open. User decision:** merge PR #9 (which also changes what `main` deploys) or land the workflow alone. Not done by this round. |
+| B13 | The `staging` GitHub environment has no branch restriction by default, so a run from another branch could read its secrets. | **Open. User action:** set Deployment branches to `main` only (DEPLOYMENT.md, step 2). |
 
 ---
 

@@ -7,7 +7,9 @@ name: Upload sweep (scheduled cleanup)
 #     CRON_SECRET). Nothing here names a production host.
 #   * The receiving app refuses a scheduler whose X-Deploy-Target does not equal its own
 #     DEPLOY_TARGET (src/server/cron-auth.ts), so a mis-pointed URL is refused, and audited.
-#   * Nothing runs until the repository variable SWEEP_ENABLED is "true".
+#   * Scheduled runs do nothing until the repository variable SWEEP_ENABLED is "true". A manual
+#     run (workflow_dispatch) is allowed without it, so the first test can be made by hand.
+#     Either way it goes only to the staging environment.
 #   * The request itself is made by scripts/run-upload-sweep.sh, which is tested in CI.
 #
 # Scheduled workflows run from the default branch only, and GitHub may pause scheduled workflows
@@ -29,7 +31,7 @@ concurrency:
 jobs:
   sweep:
     name: Run upload sweep (staging)
-    if: vars.SWEEP_ENABLED == 'true'
+    if: github.event_name == 'workflow_dispatch' || vars.SWEEP_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: staging
@@ -43,4 +45,10 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           # Optional: only if the staging deployment sits behind Vercel Deployment Protection.
           SWEEP_PROTECTION_BYPASS: ${{ secrets.SWEEP_PROTECTION_BYPASS }}
-        run: bash scripts/run-upload-sweep.sh
+        run: |
+          # This workflow is staging-only. Refuse any other target before a request is made.
+          if [ "${SWEEP_TARGET}" != "staging" ]; then
+            echo "upload-sweep: SWEEP_TARGET must be \"staging\" in this workflow. Nothing was sent."
+            exit 1
+          fi
+          bash scripts/run-upload-sweep.sh
