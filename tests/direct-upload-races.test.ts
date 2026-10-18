@@ -54,8 +54,15 @@ function matchValue(value: unknown, cond: unknown): boolean {
   return value === cond;
 }
 
-function matches(row: Row, where: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([k, cond]) => matchValue((row as unknown as Record<string, unknown>)[k], cond));
+function matches(row: object, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([k, cond]) => matchValue((row as Record<string, unknown>)[k], cond));
+}
+
+interface OrderRow {
+  id: string;
+  userId: string;
+  status: string;
+  updatedAt: Date;
 }
 
 function newRow(over: Partial<Row> = {}): Row {
@@ -80,6 +87,7 @@ function newRow(over: Partial<Row> = {}): Row {
 
 interface Harness {
   rows: Row[];
+  orders: OrderRow[];
   objects: Map<string, number>;
   /** Every object delete that reached storage, in order. */
   deletes: string[];
@@ -98,6 +106,7 @@ let policy: typeof import("@/server/direct-upload/policy");
 function freshHarness(): Harness {
   return {
     rows: [],
+    orders: [],
     objects: new Map(),
     deletes: [],
     beforeDelete: null,
@@ -108,6 +117,18 @@ function freshHarness(): Harness {
 
 function prismaLike() {
   const uploadedFile = {
+    count: async ({ where }: { where: Record<string, unknown> }) => h.rows.filter((r) => matches(r, where)).length,
+    create: async ({ data }: { data: Partial<Row> }) => {
+      const row = newRow({ ...data, id: "file-1" });
+      h.rows.push(row);
+      return { id: row.id };
+    },
+    update: async ({ where, data }: { where: Record<string, unknown>; data: Partial<Row> }) => {
+      const row = h.rows.find((r) => matches(r, where));
+      if (!row) throw new Error("update: no row");
+      Object.assign(row, data);
+      return { ...row };
+    },
     findFirst: async ({ where }: { where: Record<string, unknown> }) => {
       const row = h.rows.find((r) => matches(r, where));
       return row ? { ...row } : null;
@@ -132,7 +153,23 @@ function prismaLike() {
       return { count: before - h.rows.length };
     },
   };
-  const client = { uploadedFile, order: { findFirst: async () => ({ id: "order-1" }) } };
+  const order = {
+    findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+      const o = h.orders.find((x) => matches(x, where));
+      return o ? { ...o } : null;
+    },
+    updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Partial<OrderRow> }) => {
+      let count = 0;
+      for (const o of h.orders) {
+        if (matches(o, where)) {
+          Object.assign(o, data);
+          count++;
+        }
+      }
+      return { count };
+    },
+  };
+  const client = { uploadedFile, order };
   return {
     ...client,
     $transaction: async (fn: (tx: typeof client) => Promise<unknown>) => fn(client),
@@ -412,5 +449,61 @@ describe("claims left behind by a stopped request", () => {
     const second = await service.releaseExpiredIntents(50);
     expect(second).toMatchObject({ released: 1, failed: 0 });
     expect(h.rows).toHaveLength(0);
+  });
+});
+
+describe("attaching a document to an order", () => {
+  function seedOrder(status: string, id = "order-1") {
+    h.orders.push({ id, userId: OWNER, status, updatedAt: new Date(0) });
+  }
+
+  async function intentFor(orderId: string) {
+    return service.createUploadIntent({
+      actor: student,
+      filename: "notes.pdf",
+      declaredMime: "application/pdf",
+      declaredSizeRaw: 4096,
+      orderId,
+    });
+  }
+
+  it.each(["COMPLETED", "CANCELLED", "FAILED", "PAYMENT_CONFIRMED", "PRINTING", "READY_FOR_COLLECTION"])(
+    "refuses a new document for an order in %s, and creates no row",
+    async (status) => {
+      seedOrder(status);
+      const res = await outcome(intentFor("order-1"));
+      expect(res).toMatchObject({ ok: false, error: { status: 409, code: "ORDER_CLOSED" } });
+      expect(h.rows).toHaveLength(0);
+    }
+  );
+
+  it("accepts a new document for an order before payment is submitted", async () => {
+    seedOrder("ORDER_PLACED");
+    const intent = await intentFor("order-1");
+    expect(intent.fileId).toBeTruthy();
+    expect(h.rows[0]).toMatchObject({ orderId: "order-1", status: "PENDING" });
+  });
+
+  it("refuses a completion when the order closes while the document is being verified", async () => {
+    seedOrder("PAYMENT_PENDING");
+    const { token } = seedPending({ orderId: "order-1" });
+    h.afterStat = async () => {
+      h.afterStat = null;
+      h.orders[0].status = "CANCELLED";
+    };
+
+    const res = await outcome(service.completeUploadIntent({ actor: student, fileId: "file-1", token }));
+
+    expect(res).toMatchObject({ ok: false, error: { status: 409, code: "ORDER_CLOSED" } });
+    expect(h.rows[0]).toMatchObject({ status: "PENDING" });
+    expectNoOrphanedCompletion();
+  });
+
+  it("completes a document whose order is still open", async () => {
+    seedOrder("PAYMENT_PENDING");
+    const { token } = seedPending({ orderId: "order-1" });
+    const res = await service.completeUploadIntent({ actor: student, fileId: "file-1", token });
+    expect(res).toMatchObject({ status: "COMPLETED" });
+    expect(h.rows[0]).toMatchObject({ status: "COMPLETED", orderId: "order-1" });
   });
 });

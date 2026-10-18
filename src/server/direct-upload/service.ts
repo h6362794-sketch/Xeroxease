@@ -19,6 +19,7 @@
 import { prisma } from "@/lib/prisma";
 import { MAX_FILE_SIZE, MAX_FILES_PER_ORDER } from "@/lib/constants";
 import type { UploadIntent } from "@/lib/direct-upload";
+import { DOCUMENT_ATTACH_STATES, canAttachDocumentsIn } from "@/lib/order-status";
 import { env } from "@/server/env";
 import { audit } from "@/server/audit";
 import {
@@ -69,10 +70,12 @@ interface FileRowLike {
   status: string;
   intentExpiresAt: Date | null;
   intentTokenHash: string | null;
+  orderId: string | null;
 }
 
 const FILE_SELECT = {
   id: true,
+  orderId: true,
   uploaderId: true,
   storageKey: true,
   originalName: true,
@@ -152,10 +155,18 @@ export async function createUploadIntent(params: {
   if (params.orderId) {
     const order = await prisma.order.findFirst({
       where: { id: params.orderId, userId: params.actor.id },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!order) {
       throw new UploadServiceError("Order not found.", 404, "ORDER_NOT_FOUND");
+    }
+    // Terminal orders, and orders past payment, take no new documents (see DOCUMENT_ATTACH_STATES).
+    if (!canAttachDocumentsIn(order.status)) {
+      throw new UploadServiceError(
+        "This order can no longer take documents. Start a new order to upload a file.",
+        409,
+        "ORDER_CLOSED"
+      );
     }
   }
 
@@ -361,6 +372,21 @@ export async function completeUploadIntent(params: {
 
   try {
     await prisma.$transaction(async (tx: any) => {
+      if (file.orderId) {
+        // Re-check the order inside this transaction. The conditional touch takes the order's row
+        // lock, so an order that closes while the document is being verified cannot receive it.
+        const open = (await tx.order.updateMany({
+          where: { id: file.orderId, status: { in: [...DOCUMENT_ATTACH_STATES] } },
+          data: { updatedAt: new Date() },
+        })) as { count: number };
+        if (open.count !== 1) {
+          throw new UploadServiceError(
+            "This order is no longer open, so the document was not attached to it.",
+            409,
+            "ORDER_CLOSED"
+          );
+        }
+      }
       const updated = (await tx.uploadedFile.updateMany({
         // purgedAt: a document claimed for purging must never be verified and attached.
         where: { id: file.id, status: "PENDING", intentTokenHash: file.intentTokenHash, purgedAt: null },
