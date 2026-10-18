@@ -19,7 +19,6 @@
 import { prisma } from "@/lib/prisma";
 import { MAX_FILE_SIZE, MAX_FILES_PER_ORDER } from "@/lib/constants";
 import type { UploadIntent } from "@/lib/direct-upload";
-import { DOCUMENT_ATTACH_STATES, canAttachDocumentsIn } from "@/lib/order-status";
 import { env } from "@/server/env";
 import { audit } from "@/server/audit";
 import {
@@ -70,6 +69,7 @@ interface FileRowLike {
   status: string;
   intentExpiresAt: Date | null;
   intentTokenHash: string | null;
+  /** Non-null only on rows created before upload intents stopped accepting an order (see completion). */
   orderId: string | null;
 }
 
@@ -143,7 +143,6 @@ export async function createUploadIntent(params: {
   filename: string;
   declaredMime: string;
   declaredSizeRaw: unknown;
-  orderId?: string | null;
 }): Promise<CreatedUploadIntent> {
   const capability = directUploadsSupported();
   if (!capability.enabled) {
@@ -151,24 +150,6 @@ export async function createUploadIntent(params: {
   }
 
   const sizeBytes = normalizeDeclaredSize(params.declaredSizeRaw);
-
-  if (params.orderId) {
-    const order = await prisma.order.findFirst({
-      where: { id: params.orderId, userId: params.actor.id },
-      select: { id: true, status: true },
-    });
-    if (!order) {
-      throw new UploadServiceError("Order not found.", 404, "ORDER_NOT_FOUND");
-    }
-    // Terminal orders, and orders past payment, take no new documents (see DOCUMENT_ATTACH_STATES).
-    if (!canAttachDocumentsIn(order.status)) {
-      throw new UploadServiceError(
-        "This order can no longer take documents. Start a new order to upload a file.",
-        409,
-        "ORDER_CLOSED"
-      );
-    }
-  }
 
   // Quota uses the same rule as the proxy route: at most MAX_FILES_PER_ORDER documents
   // may sit unattached to an order per user. Expired intents do not hold a slot.
@@ -198,7 +179,6 @@ export async function createUploadIntent(params: {
   const created = await prisma.uploadedFile.create({
     data: {
       uploaderId: params.actor.id,
-      orderId: params.orderId ?? null,
       originalName: decision.safeName.slice(0, 255),
       storageKey,
       mimeType: decision.mime,
@@ -297,6 +277,17 @@ export async function completeUploadIntent(params: {
     throw new UploadServiceError("That upload could not be verified. Please start again.", 403, "TOKEN_MISMATCH");
   }
 
+  // A row that carries an order was created by the removed intent-with-order path. It is not a
+  // valid upload any more: refuse it before touching storage, so it cannot be completed into an
+  // attachment that createOrder never priced. The expiry sweep removes it.
+  if (file.orderId && file.status === "PENDING") {
+    throw new UploadServiceError(
+      "This upload is no longer valid. Please upload the document again.",
+      409,
+      "INTENT_NO_LONGER_VALID"
+    );
+  }
+
   let info: StoredObjectInfo | null;
   let headerBytes: Uint8Array | null;
   try {
@@ -372,24 +363,9 @@ export async function completeUploadIntent(params: {
 
   try {
     await prisma.$transaction(async (tx: any) => {
-      if (file.orderId) {
-        // Re-check the order inside this transaction. The conditional touch takes the order's row
-        // lock, so an order that closes while the document is being verified cannot receive it.
-        const open = (await tx.order.updateMany({
-          where: { id: file.orderId, status: { in: [...DOCUMENT_ATTACH_STATES] } },
-          data: { updatedAt: new Date() },
-        })) as { count: number };
-        if (open.count !== 1) {
-          throw new UploadServiceError(
-            "This order is no longer open, so the document was not attached to it.",
-            409,
-            "ORDER_CLOSED"
-          );
-        }
-      }
       const updated = (await tx.uploadedFile.updateMany({
         // purgedAt: a document claimed for purging must never be verified and attached.
-        where: { id: file.id, status: "PENDING", intentTokenHash: file.intentTokenHash, purgedAt: null },
+        where: { id: file.id, status: "PENDING", intentTokenHash: file.intentTokenHash, purgedAt: null, orderId: null },
         data: {
           status: "COMPLETED",
           sizeBytes: decision.verifiedSizeBytes,

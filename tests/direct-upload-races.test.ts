@@ -58,13 +58,6 @@ function matches(row: object, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([k, cond]) => matchValue((row as Record<string, unknown>)[k], cond));
 }
 
-interface OrderRow {
-  id: string;
-  userId: string;
-  status: string;
-  updatedAt: Date;
-}
-
 function newRow(over: Partial<Row> = {}): Row {
   return {
     id: "file-1",
@@ -87,7 +80,6 @@ function newRow(over: Partial<Row> = {}): Row {
 
 interface Harness {
   rows: Row[];
-  orders: OrderRow[];
   objects: Map<string, number>;
   /** Every object delete that reached storage, in order. */
   deletes: string[];
@@ -106,7 +98,6 @@ let policy: typeof import("@/server/direct-upload/policy");
 function freshHarness(): Harness {
   return {
     rows: [],
-    orders: [],
     objects: new Map(),
     deletes: [],
     beforeDelete: null,
@@ -153,23 +144,7 @@ function prismaLike() {
       return { count: before - h.rows.length };
     },
   };
-  const order = {
-    findFirst: async ({ where }: { where: Record<string, unknown> }) => {
-      const o = h.orders.find((x) => matches(x, where));
-      return o ? { ...o } : null;
-    },
-    updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Partial<OrderRow> }) => {
-      let count = 0;
-      for (const o of h.orders) {
-        if (matches(o, where)) {
-          Object.assign(o, data);
-          count++;
-        }
-      }
-      return { count };
-    },
-  };
-  const client = { uploadedFile, order };
+  const client = { uploadedFile };
   return {
     ...client,
     $transaction: async (fn: (tx: typeof client) => Promise<unknown>) => fn(client),
@@ -452,58 +427,46 @@ describe("claims left behind by a stopped request", () => {
   });
 });
 
-describe("attaching a document to an order", () => {
-  function seedOrder(status: string, id = "order-1") {
-    h.orders.push({ id, userId: OWNER, status, updatedAt: new Date(0) });
-  }
-
-  async function intentFor(orderId: string) {
-    return service.createUploadIntent({
+describe("upload intents carry no order", () => {
+  it("a new intent is created with no order link, and the order table is never read", async () => {
+    const intent = await service.createUploadIntent({
       actor: student,
       filename: "notes.pdf",
       declaredMime: "application/pdf",
       declaredSizeRaw: 4096,
-      orderId,
     });
-  }
-
-  it.each(["COMPLETED", "CANCELLED", "FAILED", "PAYMENT_CONFIRMED", "PRINTING", "READY_FOR_COLLECTION"])(
-    "refuses a new document for an order in %s, and creates no row",
-    async (status) => {
-      seedOrder(status);
-      const res = await outcome(intentFor("order-1"));
-      expect(res).toMatchObject({ ok: false, error: { status: 409, code: "ORDER_CLOSED" } });
-      expect(h.rows).toHaveLength(0);
-    }
-  );
-
-  it("accepts a new document for an order before payment is submitted", async () => {
-    seedOrder("ORDER_PLACED");
-    const intent = await intentFor("order-1");
     expect(intent.fileId).toBeTruthy();
-    expect(h.rows[0]).toMatchObject({ orderId: "order-1", status: "PENDING" });
+    expect(h.rows[0]).toMatchObject({ orderId: null, status: "PENDING" });
   });
 
-  it("refuses a completion when the order closes while the document is being verified", async () => {
-    seedOrder("PAYMENT_PENDING");
-    const { token } = seedPending({ orderId: "order-1" });
-    h.afterStat = async () => {
-      h.afterStat = null;
-      h.orders[0].status = "CANCELLED";
-    };
+  it("a legacy PENDING row that carries an order cannot be completed, and its object is not touched", async () => {
+    // Such a row can only come from the removed intent-with-order path. Completing it would attach
+    // a document that createOrder never priced, so completion refuses it before any storage read.
+    const { token } = seedPending({ orderId: "order-legacy" });
 
     const res = await outcome(service.completeUploadIntent({ actor: student, fileId: "file-1", token }));
 
-    expect(res).toMatchObject({ ok: false, error: { status: 409, code: "ORDER_CLOSED" } });
-    expect(h.rows[0]).toMatchObject({ status: "PENDING" });
+    expect(res).toMatchObject({ ok: false, error: { status: 409, code: "INTENT_NO_LONGER_VALID" } });
+    expect(h.rows[0]).toMatchObject({ status: "PENDING", orderId: "order-legacy" });
+    expect(h.objects.has(KEY)).toBe(true);
+    expect(h.deletes).toHaveLength(0);
     expectNoOrphanedCompletion();
   });
 
-  it("completes a document whose order is still open", async () => {
-    seedOrder("PAYMENT_PENDING");
-    const { token } = seedPending({ orderId: "order-1" });
+  it("the expiry sweep still removes a legacy row that carries an order, so it cannot linger", async () => {
+    seedExpired("legacy", { orderId: "order-legacy" });
+
+    const report = await service.releaseExpiredIntents(50);
+
+    expect(report).toMatchObject({ released: 1, failed: 0 });
+    expect(h.objects.has("user-owner/legacy.pdf")).toBe(false);
+    expect(h.rows).toHaveLength(0);
+  });
+
+  it("a completion of an unattached document still completes normally", async () => {
+    const { token } = seedPending();
     const res = await service.completeUploadIntent({ actor: student, fileId: "file-1", token });
     expect(res).toMatchObject({ status: "COMPLETED" });
-    expect(h.rows[0]).toMatchObject({ status: "COMPLETED", orderId: "order-1" });
+    expect(h.rows[0]).toMatchObject({ status: "COMPLETED", orderId: null });
   });
 });

@@ -31,7 +31,7 @@ The legacy proxy path (`POST /api/uploads`, whole file through the app) still ex
  1. POST /api/uploads
       /intent
     {filename,mimeType,
-     sizeBytes,orderId?}  →  session + ownership + quota +
+     sizeBytes}  →  session + quota +
                             extension/MIME/size validation
                             · creates uploaded_files row (status=PENDING)
                             · mints server-only storage key
@@ -63,7 +63,7 @@ whose `status = COMPLETED`**, i.e. verified against storage (`src/server/orders.
 | Step | Enforced by |
 |---|---|
 | Who may ask | session cookie; `requireUser()` — no session, no intent (401) |
-| Which order | `orderId` is resolved against `orders.user_id = session user`; foreign/unknown → 404 |
+| Which order | None. Intents carry no order: the body is strict, so an `orderId` field is refused with 422. A document joins an order only through `createOrder`, which checks state and page count and prices it. |
 | Whose file | storage key and owner are **server-generated** (`buildStorageKey(sessionUser.id, …)`); the client never supplies a key or a user id |
 | Quota | at most `MAX_FILES_PER_ORDER` unattached, un-expired documents per user |
 | Size / type at request time | `decideUploadIntent()` — extension allow-list, double-extension rejection, declared-MIME↔extension agreement, `sizeBytes ≤ 50 MiB` (inclusive), and ≤ the provider cap if lower |
@@ -145,7 +145,9 @@ Required, on the Supabase project that backs the deployment:
 
 * **Idempotency.** PUT to a signed URL overwrites-or-conflicts at one fixed key, so a
   client retry of the same file is safe; `complete` is idempotent per §2.2; a
-  `PENDING + no orderId` row is re-completable within its window.
+  A `PENDING` row is re-completable within its window. A `PENDING` row that carries an
+  `orderId` (only possible from the removed intent path) is refused at completion
+  (`INTENT_NO_LONGER_VALID`) and is removed by the expiry sweep.
 * **No orphan promotion.** A row is only usable when the app has verified the object at
   the key it generated. A row without a verified object can never be ordered, priced or
   printed.

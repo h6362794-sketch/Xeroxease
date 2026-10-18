@@ -48,18 +48,6 @@ export function adminNextStatusOptions(from: string): string[] {
 }
 
 /**
- * Order states that may take a document through the direct-upload path (`orderId` on an intent,
- * and the attach re-check at completion). Only the two states before payment is submitted. Any
- * other state, terminal or past payment, refuses the document: a document added later changes the
- * page count, and so the price, of an order the desk has already moved on.
- */
-export const DOCUMENT_ATTACH_STATES = ["ORDER_PLACED", "PAYMENT_PENDING"] as const;
-
-export function canAttachDocumentsIn(status: string): boolean {
-  return (DOCUMENT_ATTACH_STATES as readonly string[]).includes(status);
-}
-
-/**
  * Statuses from which a student may cancel, given the Super Admin's configured list.
  *
  * The configured list can only NARROW the built-in cancellable set; it can never widen it.

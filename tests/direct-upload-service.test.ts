@@ -246,8 +246,9 @@ describe("createUploadIntent", () => {
       sizeBytes: 4096,
       status: "PENDING",
       analysisStatus: "PENDING",
-      orderId: null,
     });
+    // Intents never write an order link; the column is NULL (the database default).
+    expect(created.orderId ?? null).toBeNull();
     // The row keeps a *digest* of the completion credential, never the credential.
     expect(created.intentTokenHash).not.toBe(res.token);
     expect(String(created.intentTokenHash)).toHaveLength(64);
@@ -298,11 +299,10 @@ describe("createUploadIntent", () => {
     expect(err).toMatchObject({ status: 409, code: "QUOTA" });
   });
 
-  it("refuses an order the caller does not own", async () => {
-    mock(db.order.findFirst).mockResolvedValueOnce(null);
-    const err = await expectError(intent({ orderId: "order-other" }));
-    expect(err).toMatchObject({ status: 404, code: "ORDER_NOT_FOUND" });
-    expect(db.uploadedFile.create).not.toHaveBeenCalled();
+  it("never links an order at intent time: the order table is not read and the row has no order", async () => {
+    await intent();
+    expect(db.order.findFirst).not.toHaveBeenCalled();
+    expect(db.uploadedFile.create.mock.calls[0][0].data).not.toHaveProperty("orderId");
   });
 
   it("reports a `local` backend as unsupported (501), not broken (500)", async () => {

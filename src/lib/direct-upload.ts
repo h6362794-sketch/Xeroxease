@@ -154,7 +154,7 @@ export function putToStorage(
 export async function uploadDocumentDirect<TComplete = unknown>(
   file: File,
   deps: {
-    requestIntent: (meta: { filename: string; mimeType: string; sizeBytes: number; orderId?: string | null }) => Promise<UploadIntent>;
+    requestIntent: (meta: { filename: string; mimeType: string; sizeBytes: number }) => Promise<UploadIntent>;
     reportComplete: (payload: { fileId: string; token: string }) => Promise<TComplete>;
     releaseIntent?: (fileId: string) => void | Promise<unknown>;
     onProgress?: (fraction: number) => void;

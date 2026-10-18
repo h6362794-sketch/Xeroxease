@@ -9,14 +9,17 @@ import { RATE_LIMITS } from "@/server/rate-limit";
 import { UploadServiceError, createUploadIntent } from "@/server/direct-upload/service";
 import { DeploymentCapabilityError } from "@/server/direct-upload/capability";
 
-const schema = z.object({
+// Strict: an unknown field (including the removed `orderId`) is refused with a validation error,
+// never silently dropped. Documents join an order only through createOrder, which prices them.
+const schema = z
+  .object({
   filename: z.string().min(1).max(255),
   /** Optional: browsers legitimately send application/octet-stream for blobs. */
   mimeType: z.string().max(128).optional().or(z.literal("")),
   /** Declared size. Never trusted — re-measured from storage at completion. */
   sizeBytes: z.union([z.number().int().nonnegative(), z.string().regex(/^\d{1,12}$/)]),
-  orderId: z.string().uuid().nullish(),
-});
+  })
+  .strict();
 
 export async function POST(req: Request) {
   return withErrorHandling(async () => {
@@ -31,7 +34,6 @@ export async function POST(req: Request) {
         filename: body.filename,
         declaredMime: body.mimeType ?? "",
         declaredSizeRaw: body.sizeBytes,
-        orderId: body.orderId ?? null,
       });
       return json({ mode: "direct", ...intent }, { status: 201 });
     } catch (err) {

@@ -262,6 +262,16 @@ describe("POST /api/uploads/intent", () => {
     expect(createUploadIntent).not.toHaveBeenCalled();
   });
 
+  it("refuses an intent that names an order, even a well-formed one, and never creates it", async () => {
+    // orderId was removed from intents. A valid UUID is refused like any other unknown field.
+    const res = await routes.intent.POST(
+      post({ filename: "a.pdf", sizeBytes: 10, orderId: "33333333-3333-4333-8333-333333333333" })
+    );
+    expect(res.status).toBe(422);
+    expect((await body(res)).code).toBe("VALIDATION_ERROR");
+    expect(createUploadIntent).not.toHaveBeenCalled();
+  });
+
   it("rejects a non-JSON body with 400", async () => {
     const res = await routes.intent.POST(
       new Request("https://app.test/api/uploads/intent", { method: "POST", body: "filename=a.pdf" })
