@@ -10,6 +10,7 @@ import {
 import { Button, Card, FieldError, Input, Label, Modal, RatingInput, Skeleton, Textarea, EmptyState } from "@/components/ui";
 import { StatusBadge, PaymentStatusBadge } from "@/components/status-badge";
 import { OrderTimeline } from "@/components/order-timeline";
+import { PaymentForm } from "@/features/student/payment-form";
 import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api-client";
 import { formatCurrencyINR, formatDate, formatBytes } from "@/lib/utils";
@@ -31,6 +32,8 @@ interface OrderData {
   finishingFee: number;
   totalAmount: number;
   paymentRef: string | null;
+  /** The desk's reason for rejecting the current reference; present only while it is rejected. */
+  rejectionReason?: string | null;
   adminNotes: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -191,27 +194,27 @@ export function OrderDetail({ orderId }: { orderId: string; userId: string }) {
       </Card>
 
       {/* Payment panel */}
-      {(canPay || order.paymentStatus === "PAYMENT_UNDER_REVIEW" || order.paymentStatus === "PAYMENT_PROOF_SUBMITTED") && (
+      {canPay && (
+        // The payment form is the same one the order wizard uses, so a student can pay, or
+        // correct a rejected reference and resubmit, from this page at any time.
+        <PaymentForm
+          orderId={order.id}
+          orderNumber={order.orderNumber}
+          totalAmount={order.totalAmount}
+          rejectionReason={order.paymentStatus === "PAYMENT_REJECTED" ? (order.rejectionReason ?? "") : null}
+          onSubmitted={load}
+        />
+      )}
+      {!canPay && (order.paymentStatus === "PAYMENT_UNDER_REVIEW" || order.paymentStatus === "PAYMENT_PROOF_SUBMITTED") && (
         <Card className="space-y-4">
           <h2 className="font-bold text-white">Payment</h2>
-          {canPay ? (
-            <>
-              <p className="text-sm text-zinc-400">
-                Pay <span className="font-bold text-white">{formatCurrencyINR(order.totalAmount)}</span> for this order via the print desk&apos;s QR.
-              </p>
-              <Link href={`/orders/new?pay=${order.id}`}>
-                <Button className="w-full">Open payment QR</Button>
-              </Link>
-            </>
-          ) : (
-            <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-              <ShieldCheck className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-sm text-amber-200">
-                Your payment reference {order.paymentRef ? <span className="font-mono">({order.paymentRef.slice(-4)})</span> : null} is under review by the print desk.
-                You&apos;ll be notified once it&apos;s confirmed.
-              </p>
-            </div>
-          )}
+          <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+            <ShieldCheck className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-200">
+              Your payment reference {order.paymentRef ? <span className="font-mono">({order.paymentRef.slice(-4)})</span> : null} is under review by the print desk.
+              You&apos;ll be notified once it&apos;s confirmed.
+            </p>
+          </div>
         </Card>
       )}
 

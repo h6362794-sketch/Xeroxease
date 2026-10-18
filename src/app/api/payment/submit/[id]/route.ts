@@ -5,8 +5,9 @@ import { RATE_LIMITS } from "@/server/rate-limit";
 import { paymentSubmitSchema } from "@/server/validation";
 import { audit } from "@/server/audit";
 import { notify, NOTIFY } from "@/server/notifications";
-import { OrderError, TERMINAL_ORDER_STATES } from "@/server/orders";
+import { OrderError } from "@/server/orders";
 import { DUPLICATE_REFERENCE_MESSAGE, isPaymentReferenceConflict } from "@/server/payment-reference";
+import { PAYMENT_SUBMISSION_STATES, isPaymentSubmissionState } from "@/lib/order-status";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
@@ -22,10 +23,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const order = await prisma.order.findUnique({ where: { id } });
     if (!order) return apiError("Order not found.", 404);
     if (order.userId !== user.id) return apiError("You can only submit payment for your own orders.", 403);
-    // Cancelled, failed or completed orders keep their payment fields. Without this check a
-    // submission would move the order back into review, reviving a cancelled order.
-    if ((TERMINAL_ORDER_STATES as readonly string[]).includes(order.status)) {
-      return apiError("This order is no longer open for payment.", 409);
+    // State guard. A submission moves the order to PAYMENT_UNDER_REVIEW, which is only a legal
+    // transition from the states listed here. Cancelled, failed and completed orders keep their
+    // payment fields, and orders past payment (printing, collection) must not be moved back into
+    // review even when their payment fields look rejected or pending.
+    if (!isPaymentSubmissionState(order.status)) {
+      return apiError(
+        order.status === "PAYMENT_CONFIRMED"
+          ? "Payment for this order is already confirmed."
+          : "This order is no longer open for payment.",
+        409
+      );
     }
 
     // Idempotency & duplicate protection
@@ -56,7 +64,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             id: order.id,
             userId: user.id,
             paymentStatus: { in: ["PAYMENT_PENDING", "PAYMENT_REJECTED", "PAYMENT_FAILED"] },
-            status: { notIn: [...TERMINAL_ORDER_STATES] },
+            status: { in: [...PAYMENT_SUBMISSION_STATES] },
           },
           data: {
             paymentStatus: "PAYMENT_UNDER_REVIEW",

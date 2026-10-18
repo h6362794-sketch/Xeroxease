@@ -45,6 +45,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           adminNotes: null,
           paymentVerifiedBy: null,
           paymentNote: null,
+          // The desk's reason for rejecting a payment is written for the student, so it is shown
+          // to them while the payment is rejected. The raw paymentNote stays hidden.
+          rejectionReason: order.paymentStatus === "PAYMENT_REJECTED" ? order.paymentNote : null,
           cancelledBy: null,
           collectionTokenHash: null,
           events: order.events.map((e) => ({ ...e, actorId: null, actorRole: null })),

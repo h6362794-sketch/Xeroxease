@@ -129,8 +129,10 @@ describe("POST /api/payment/submit/[id]", () => {
   it("the conditional write itself excludes terminal orders (race with a cancel)", async () => {
     txOrderUpdateMany.mockResolvedValueOnce({ count: 0 });
     const res = await submit("UTR12345678");
+    // Allowlist, not a terminal denylist: a submission may only move the order from a
+    // state in which PAYMENT_UNDER_REVIEW is a legal transition.
     expect(txOrderUpdateMany.mock.calls[0][0].where.status).toEqual({
-      notIn: ["CANCELLED", "FAILED", "COMPLETED"],
+      in: ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"],
     });
     expect(res.status).toBe(409);
     expect(txPaymentEventCreate).not.toHaveBeenCalled();
