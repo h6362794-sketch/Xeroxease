@@ -85,6 +85,45 @@ const FILE_SELECT = {
 } as const;
 
 /**
+ * How long a claim may sit before the expiry sweep treats it as left behind by a stopped request.
+ * Longer than any single delete, so a live abort is never reaped out from under itself.
+ */
+export const CLAIM_LEASE_MS = 10 * 60 * 1000;
+
+/**
+ * Claim a PENDING row for removal, before its object is touched. The claim is one conditional
+ * write on `status = PENDING AND purged_at IS NULL`. So of the paths that want the same row (owner
+ * abort, expiry sweep, refused completion), exactly one gets it, and a completion that already wrote
+ * COMPLETED leaves nothing to claim. Returns the claim time, or null when the row is not ours.
+ */
+export async function claimPendingRow(where: {
+  id: string;
+  uploaderId?: string;
+  intentExpiredBefore?: Date;
+}): Promise<Date | null> {
+  const claimedAt = new Date();
+  const { count } = (await prisma.uploadedFile.updateMany({
+    where: {
+      id: where.id,
+      ...(where.uploaderId ? { uploaderId: where.uploaderId } : {}),
+      ...(where.intentExpiredBefore ? { intentExpiresAt: { lt: where.intentExpiredBefore } } : {}),
+      status: "PENDING",
+      purgedAt: null,
+    },
+    data: { purgedAt: claimedAt },
+  })) as { count: number };
+  return count === 1 ? claimedAt : null;
+}
+
+/** Give a claim back after a failed delete, so the row is retried instead of stranded. */
+export async function releaseClaim(id: string, claimedAt: Date): Promise<void> {
+  await prisma.uploadedFile.updateMany({
+    where: { id, status: "PENDING", purgedAt: claimedAt },
+    data: { purgedAt: null },
+  });
+}
+
+/**
  * The intent response, typed against the browser contract in `src/lib/direct-upload.ts`
  * so the two cannot drift apart silently: a field added here that the client does not
  * know about is a field nobody reads, and a field the client reads that we stopped
@@ -272,12 +311,28 @@ export async function completeUploadIntent(params: {
 
   if (!decision.ok) {
     if (decision.deleteObject && file.storageKey) {
-      // Best effort: an object we refused must not linger in the bucket.
-      await deleteFile(file.storageKey).catch(() => undefined);
-    }
-    if (decision.code !== "FORBIDDEN") {
+      // An object we refused must not linger in the bucket. Claim the row first, so an abort or
+      // the sweep cannot race this delete; a failed delete releases the claim and leaves the row
+      // PENDING, where the expired-intent sweep retries it. FAILED is written only once the object
+      // is confirmed gone.
+      const claimedAt = await claimPendingRow({ id: file.id });
+      if (claimedAt) {
+        try {
+          await deleteFile(file.storageKey);
+          await prisma.uploadedFile.updateMany({
+            where: { id: file.id, purgedAt: claimedAt },
+            data: { status: "FAILED", analysisStatus: "FAILED" },
+          });
+        } catch {
+          await releaseClaim(file.id, claimedAt);
+        }
+      }
+    } else if (decision.code !== "FORBIDDEN") {
       await prisma.uploadedFile
-        .update({ where: { id: file.id }, data: { status: "FAILED", analysisStatus: "FAILED" } })
+        .updateMany({
+          where: { id: file.id, status: "PENDING", purgedAt: null },
+          data: { status: "FAILED", analysisStatus: "FAILED" },
+        })
         .catch(() => undefined);
     }
     await audit({
@@ -367,12 +422,24 @@ export async function abortUploadIntent(params: { actor: SessionActor; fileId: s
     throw new UploadServiceError("This document is already verified and remains attached to your order.", 409, "ALREADY_COMPLETED");
   }
 
-  // Remove the row only once its object is confirmed gone. If the storage delete fails, the row
-  // stays and expires into the cleanup job, which retries it; deleting the row first orphaned it.
+  // Claim the row before touching the object. A completion that verifies the object at the same time
+  // cannot then mark a row COMPLETED whose object we are deleting: its guarded write loses the claim.
+  const claimedAt = await claimPendingRow({ id: file.id, uploaderId: params.actor.id });
+  if (!claimedAt) {
+    throw new UploadServiceError(
+      "This document was just verified or removed. Refresh to see its current state.",
+      409,
+      "ALREADY_PROCESSED"
+    );
+  }
+
+  // Remove the row only once its object is confirmed gone. If the storage delete fails, the claim is
+  // released and the row stays PENDING, where the expiry sweep retries it.
   if (file.storageKey) {
     try {
       await deleteFile(file.storageKey);
     } catch {
+      await releaseClaim(file.id, claimedAt);
       throw new UploadServiceError(
         "We could not remove that document right now. It will be cleaned up automatically.",
         503,
@@ -380,7 +447,7 @@ export async function abortUploadIntent(params: { actor: SessionActor; fileId: s
       );
     }
   }
-  await prisma.uploadedFile.deleteMany({ where: { id: file.id, uploaderId: params.actor.id, status: "PENDING" } });
+  await prisma.uploadedFile.deleteMany({ where: { id: file.id, purgedAt: claimedAt } });
 
   await audit({
     actorId: params.actor.id,
@@ -414,27 +481,57 @@ export async function releaseExpiredIntents(limit = 50): Promise<IntentSweepRepo
     take: capped + 1,
   });
   const rows = stale.slice(0, capped);
+  const now = new Date();
   let released = 0;
   let failed = 0;
   for (const row of rows) {
-    // The row goes only after its object is confirmed gone. A failed storage delete used to be
-    // swallowed and the row deleted anyway, which left the bytes with no record to retry from.
+    // Claim first, so a completion or an owner abort running at the same time cannot be deleting
+    // the same row. The claim is refused if the row was completed in the meantime.
+    const claimedAt = await claimPendingRow({ id: row.id, intentExpiredBefore: now });
+    if (!claimedAt) continue;
+    // The row goes only after its object is confirmed gone. A failed storage delete releases the
+    // claim, so the next run retries it.
     if (row.storageKey) {
       try {
         await deleteFile(row.storageKey);
       } catch {
+        await releaseClaim(row.id, claimedAt);
         failed++;
         continue;
       }
     }
-    // Delete only the row, never the object an order may already reference: an order
-    // can only attach COMPLETED files, so a PENDING row here is always orphan-safe.
+    // Delete only our claimed row, never an object an order may already reference: an order can
+    // only attach COMPLETED files, so a claimed PENDING row here is always orphan-safe.
     const res = (await prisma.uploadedFile.deleteMany({
-      where: { id: row.id, status: "PENDING" },
+      where: { id: row.id, purgedAt: claimedAt },
     })) as { count: number };
     if (res.count > 0) released++;
   }
-  if (rows.length > 0) {
+
+  // Claims left behind by a request that stopped between claiming and deleting (a crash or a
+  // timeout). Their objects may still exist, so the delete is repeated before the row goes.
+  const leftoverCutoff = new Date(now.getTime() - CLAIM_LEASE_MS);
+  const leftovers = await prisma.uploadedFile.findMany({
+    where: { status: "PENDING", purgedAt: { not: null, lt: leftoverCutoff } },
+    select: { id: true, storageKey: true, purgedAt: true },
+    take: capped,
+  });
+  let leftoversRemoved = 0;
+  for (const row of leftovers) {
+    try {
+      if (row.storageKey) await deleteFile(row.storageKey);
+    } catch {
+      failed++;
+      continue; // the claim stays; the next run retries it
+    }
+    const res = (await prisma.uploadedFile.deleteMany({
+      where: { id: row.id, status: "PENDING", purgedAt: row.purgedAt },
+    })) as { count: number };
+    leftoversRemoved += res.count;
+  }
+  released += leftoversRemoved;
+
+  if (rows.length > 0 || leftovers.length > 0) {
     await audit({
       actorId: null,
       actorRole: "SYSTEM",
@@ -442,7 +539,7 @@ export async function releaseExpiredIntents(limit = 50): Promise<IntentSweepRepo
       targetType: "FILE",
       // No targetId: a sweep is not about one row, and inventing an id would make the
       // audit trail look like it was.
-      metadata: { released, attempted: rows.length, failed },
+      metadata: { released, attempted: rows.length, failed, leftoversRemoved },
     });
   }
   return {

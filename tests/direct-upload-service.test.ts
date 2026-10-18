@@ -86,6 +86,8 @@ function fakeDb() {
       }),
       findFirst: vi.fn(async (_arg?: unknown) => null as FakeRow | null),
       findMany: vi.fn(async (_arg?: unknown) => [] as unknown[]),
+      // Claims and guarded writes outside the transaction. Default: the claim is won.
+      updateMany: vi.fn(async (_arg?: unknown) => ({ count: 1 })),
       deleteMany: vi.fn(async (_arg?: unknown) => ({ count: 1 })),
     },
     $transaction: vi.fn(async (fn: (tx: { uploadedFile: { updateMany: typeof db.uploadedFile.update } }) => Promise<unknown>) =>
@@ -414,7 +416,8 @@ describe("completeUploadIntent", () => {
     const err = await expectError(complete(row, grant.token));
     expect(err).toMatchObject({ status: 422, code: "SIZE_MISMATCH" });
     expect(deleteFile).toHaveBeenCalledWith(KEY);
-    const written = lastCall<{ data: Record<string, unknown> }>(db.uploadedFile.update).data;
+    // The row is claimed before the delete, and FAILED is written only after the object is gone.
+    const written = lastCall<{ data: Record<string, unknown> }>(db.uploadedFile.updateMany).data;
     expect(written).toMatchObject({ status: "FAILED", analysisStatus: "FAILED" });
     expect(err.message).not.toContain(KEY);
   });
@@ -493,8 +496,13 @@ describe("abortUploadIntent", () => {
     const res = await service.abortUploadIntent({ actor: student, fileId: "file-1" });
     expect(res).toEqual({ released: true });
     expect(deleteFile).toHaveBeenCalledWith(KEY);
+    // Claimed first (conditional on PENDING and unclaimed), then the object, then the claimed row only.
+    expect(db.uploadedFile.updateMany).toHaveBeenCalledWith({
+      where: { id: "file-1", uploaderId: OWNER, status: "PENDING", purgedAt: null },
+      data: { purgedAt: expect.any(Date) },
+    });
     expect(db.uploadedFile.deleteMany).toHaveBeenCalledWith({
-      where: { id: "file-1", uploaderId: OWNER, status: "PENDING" },
+      where: { id: "file-1", purgedAt: expect.any(Date) },
     });
   });
 
