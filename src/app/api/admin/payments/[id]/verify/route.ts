@@ -5,6 +5,7 @@ import { z } from "zod";
 import { audit } from "@/server/audit";
 import { NOTIFY } from "@/server/notifications";
 import { OrderError, PAYMENT_DECISION_ORDER_STATES, VERIFIABLE_PAYMENT_STATES } from "@/server/orders";
+import { isTransitionAllowed } from "@/lib/order-status";
 
 const schema = z.object({ note: z.string().trim().max(500).optional().or(z.literal("")) });
 
@@ -19,6 +20,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!order) return apiError("Order not found.", 404);
     if (order.paymentStatus === "PAYMENT_CONFIRMED") {
       return Response.json({ ok: true, idempotent: true });
+    }
+    if (!isTransitionAllowed(order.status, "PAYMENT_CONFIRMED")) {
+      return apiError(`This order is ${order.status.toLowerCase().replace(/_/g, " ")} and its payment cannot be verified.`, 409);
     }
     if (!(PAYMENT_DECISION_ORDER_STATES as readonly string[]).includes(order.status)) {
       return apiError(`This order is ${order.status.toLowerCase().replace(/_/g, " ")} and its payment cannot be verified.`, 409);

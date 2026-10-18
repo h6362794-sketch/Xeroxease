@@ -138,7 +138,11 @@ describe("cancelOrder", () => {
   it("writes only if the status that was checked is still current", async () => {
     const { cancelOrder } = await import("@/server/orders");
     findUnique.mockResolvedValue({ ...ORDER, status: "PAYMENT_UNDER_REVIEW" });
-    // Eligibility comes from the settings table; the status is also in CANCELLABLE_STATUSES.
+    // Eligibility comes only from the configured list (which narrows the built-in set).
+    const { getSettings } = await import("@/server/settings");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      cancellationAllowedStatuses: ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"],
+    } as never);
     await cancelOrder({ orderId: ORDER.id, userId: ORDER.userId, reason: "changed mind", actorRole: "STUDENT" });
     expect(updateMany.mock.calls[0][0].where).toEqual({
       id: ORDER.id,

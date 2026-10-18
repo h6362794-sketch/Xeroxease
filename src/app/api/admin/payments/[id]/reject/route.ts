@@ -5,6 +5,7 @@ import { z } from "zod";
 import { audit } from "@/server/audit";
 import { NOTIFY } from "@/server/notifications";
 import { OrderError, PAYMENT_DECISION_ORDER_STATES, VERIFIABLE_PAYMENT_STATES } from "@/server/orders";
+import { isTransitionAllowed } from "@/lib/order-status";
 
 const schema = z.object({
   note: z.string().trim().min(3, "A rejection note is required.").max(500),
@@ -19,6 +20,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const order = await prisma.order.findUnique({ where: { id } });
     if (!order) return apiError("Order not found.", 404);
+    // Rejection moves the order back to PAYMENT_PENDING. Same-state is a no-op, anything else must be legal.
+    if (order.status !== "PAYMENT_PENDING" && !isTransitionAllowed(order.status, "PAYMENT_PENDING")) {
+      return apiError(`This order is ${order.status.toLowerCase().replace(/_/g, " ")} and its payment cannot be rejected.`, 409);
+    }
     if (!(PAYMENT_DECISION_ORDER_STATES as readonly string[]).includes(order.status)) {
       return apiError(`This order is ${order.status.toLowerCase().replace(/_/g, " ")} and its payment cannot be rejected.`, 409);
     }

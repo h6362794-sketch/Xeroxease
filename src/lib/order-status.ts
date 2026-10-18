@@ -6,7 +6,7 @@
 // `tests/order-rules.test.ts` suite fail on a checkout where Prisma Client had
 // not been generated yet).
 
-import { ORDER_TRANSITIONS } from "./constants";
+import { CANCELLABLE_STATUSES, ORDER_TRANSITIONS } from "./constants";
 
 /** Actors allowed to move orders between states. Students may never do so. */
 const ALLOWED_STATUS_ACTORS: Record<string, string[]> = {
@@ -57,4 +57,19 @@ export const DOCUMENT_ATTACH_STATES = ["ORDER_PLACED", "PAYMENT_PENDING"] as con
 
 export function canAttachDocumentsIn(status: string): boolean {
   return (DOCUMENT_ATTACH_STATES as readonly string[]).includes(status);
+}
+
+/**
+ * Statuses from which a student may cancel, given the Super Admin's configured list.
+ *
+ * The configured list can only NARROW the built-in cancellable set; it can never widen it.
+ * Each status must also be a legal transition to CANCELLED in the state machine, so a setting
+ * cannot make a completed, failed or already-printing order cancellable.
+ */
+export function studentCancellableStatuses(configured: readonly string[]): string[] {
+  return configured.filter((s) => (CANCELLABLE_STATUSES as readonly string[]).includes(s) && isTransitionAllowed(s, "CANCELLED"));
+}
+
+export function canStudentCancelIn(status: string, configured: readonly string[]): boolean {
+  return studentCancellableStatuses(configured).includes(status);
 }

@@ -1,16 +1,9 @@
 import { requireRole } from "@/server/auth";
 import { json, parseBody, withErrorHandling } from "@/server/api-utils";
 import { getSettings, updateSettings, type AppSettings } from "@/server/settings";
-import { z } from "zod";
+import { settingsPatchSchema as schema } from "@/lib/settings-policy";
 import { audit } from "@/server/audit";
 
-const schema = z.object({
-  paymentInstructions: z.string().max(1000).optional(),
-  paymentAccountDisplay: z.string().max(120).optional(),
-  retentionDays: z.coerce.number().int().min(1).max(3650).optional(),
-  queuePagesPerHour: z.coerce.number().int().min(50).max(100000).optional(),
-  cancellationAllowedStatuses: z.array(z.string().max(40)).max(12).optional(),
-});
 
 export async function GET() {
   return withErrorHandling(async () => {

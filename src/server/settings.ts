@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { studentCancellableStatuses } from "@/lib/order-status";
 
 export interface AppSettings {
   paymentQrEnabled: boolean;
@@ -38,8 +39,10 @@ export async function getSettings(): Promise<AppSettings> {
   return {
     ...DEFAULTS,
     ...v,
-    cancellationAllowedStatuses:
-      v.cancellationAllowedStatuses ?? DEFAULTS.cancellationAllowedStatuses,
+    // Re-check on read too, so a value stored before validation tightened cannot widen cancellation.
+    cancellationAllowedStatuses: studentCancellableStatuses(
+      v.cancellationAllowedStatuses ?? DEFAULTS.cancellationAllowedStatuses
+    ),
   };
 }
 

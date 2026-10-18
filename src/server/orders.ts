@@ -2,8 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { calculatePrice, computeSheets } from "./pricing";
 import { parsePageSelection } from "./page-selection";
-import { CANCELLABLE_STATUSES } from "@/lib/constants";
-import { canActorChangeStatus, isTransitionAllowed } from "@/lib/order-status";
+import { canActorChangeStatus, canStudentCancelIn, isTransitionAllowed } from "@/lib/order-status";
 
 export { canActorChangeStatus, isTransitionAllowed };
 import { audit } from "./audit";
@@ -450,10 +449,9 @@ export async function cancelOrder(params: {
 
   const { getSettings } = await import("./settings");
   const settings = await getSettings();
-  const eligible = settings.cancellationAllowedStatuses.includes(order.status);
-  const eligibleEnum = CANCELLABLE_STATUSES as readonly string[];
-  const allowed = eligible || eligibleEnum.includes(order.status);
-  if (!allowed) {
+  // The configured list can only narrow the built-in cancellable set, and every status must be a
+  // legal transition to CANCELLED. See canStudentCancelIn.
+  if (!canStudentCancelIn(order.status, settings.cancellationAllowedStatuses)) {
     throw new OrderError("This order can no longer be cancelled.", 409);
   }
 
