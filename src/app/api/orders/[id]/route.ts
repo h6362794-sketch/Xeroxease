@@ -37,9 +37,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     const hasCollectionToken = Boolean(order.collectionTokenHash) && !order.collectionTokenUsedAt;
 
+    // Desk-only fields never reach a student: internal notes, who verified or cancelled
+    // the order, the collection-token digest, and the admin actor ids on the timeline.
+    const studentView = isAdmin
+      ? {}
+      : {
+          adminNotes: null,
+          paymentVerifiedBy: null,
+          cancelledBy: null,
+          collectionTokenHash: null,
+          events: order.events.map((e) => ({ ...e, actorId: null, actorRole: null })),
+        };
+
     return json({
       order: {
         ...order,
+        ...studentView,
         totalAmount: Number(order.totalAmount),
         pricePerPage: Number(order.pricePerPage),
         finishingFee: Number(order.finishingFee),
