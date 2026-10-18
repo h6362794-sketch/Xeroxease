@@ -1,11 +1,28 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { isCrossSiteStateChange } from "@/lib/request-origin";
 
 /**
  * Security headers on every response. Route-level auth is enforced server-side
  * in layouts/API handlers (this middleware never trusts cookies for decisions).
  */
 export function middleware(req: NextRequest) {
+  // Refuse cross-site state changes to the API before any handler runs. SameSite=Lax
+  // already blocks the common case; this makes the rule explicit and independent of it.
+  const proto = req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(/:$/, "");
+  if (
+    isCrossSiteStateChange(req.method, req.nextUrl.pathname, req.headers.get("origin"), {
+      host: req.headers.get("x-forwarded-host") ?? req.headers.get("host"),
+      proto,
+      appUrl: process.env.NEXT_PUBLIC_APP_URL,
+    })
+  ) {
+    return NextResponse.json(
+      { error: "This request was refused because it came from another site.", code: "CROSS_SITE_REFUSED" },
+      { status: 403, headers: { "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } }
+    );
+  }
+
   const res = NextResponse.next();
 
   // Content Security Policy — built around actual app needs:
