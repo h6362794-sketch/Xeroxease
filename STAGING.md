@@ -13,7 +13,11 @@ the bootstrap of the first Super Admin, and a manual smoke test.
 
 | Item | Result |
 |---|---|
-| Existing authorised Supabase test project | **None available.** No Supabase connector is connected, and no Supabase or database variables exist in the sandbox. Nothing was created or spent. |
+| Existing Supabase project | **One project exists** in the connected `xeroxease` organisation (Supabase connector now enabled). Region ap-northeast-1, status active. Not confirmed as a designated test project; its name is generic. Read-only inspection only: nothing written, created or spent. |
+| Schema on that project | XeroxEase schema is applied (all 14 Prisma tables, plus `_prisma_migrations`). Applied migrations: `20261013000000_init`, `20261014000000_recovery_codes`, `20261015000000_direct_upload_intents`. **Missing:** `20261018000000_payment_reference_unique`. |
+| Data on that project (counts only) | 4 users, 2 orders, 0 payment events, 22 audit-log rows. This looks like test activity, but it has existing data, so it is not a clean staging database. |
+| Normalised duplicate check on that project | Zero rows (read-only SELECT, from the migration header). The unique-index migration can apply once you approve. |
+| Sandbox env | No Supabase or database variables are set in the sandbox. Sandbox egress does not reach `supabase.co`. |
 | Sandbox egress to `supabase.co` / `vercel.com` | **Not reachable** (allowlist is GitHub, npm and PyPI only). The staging run must happen outside this sandbox. |
 | Repo config check (`npm run config:check`) | Exits 1 with no env (4 missing). With a production-profile dummy env it fails on `NEXT_PUBLIC_APP_URL` not being `https`. Config checks are therefore active; the real values still need supplying. |
 
@@ -23,9 +27,14 @@ the bootstrap of the first Super Admin, and a manual smoke test.
 
 Costs are at the stated list prices (checked 2026-10; re-check before purchase). Budget is $0 unless you approve otherwise.
 
-1. **[USER] Create or pick a staging Supabase project.** The Free plan is $0 with a
-   50 MB per-file limit and pauses after inactivity. Pro is $25/month. Record the project
-   URL and the keys only in your secret manager, never here.
+1. **[USER] Choose the staging Supabase project.** Either:
+   - **(a)** Reuse the existing project in the `xeroxease` organisation, **only** if you
+     confirm it is a designated test environment and not production. It already has the
+     schema and some test data, so the migration and seed steps write into it. Apply
+     `20261018000000_payment_reference_unique` first, after the normalised check passes.
+   - **(b)** Create a new project. The Free plan is $0 with a 50 MB per-file limit and
+     pauses after inactivity. Pro is $25/month.
+   Record the project URL and keys only in your secret manager, never here.
 2. **[USER] Create a private storage bucket** named to match `STORAGE_BUCKET` (default
    `documents`). Keep it private. Set the bucket's global per-file limit to match
    `STORAGE_PROVIDER_MAX_FILE_BYTES`. Do **not** enable public access.
