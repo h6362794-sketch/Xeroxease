@@ -207,7 +207,7 @@ checklist** (things the code cannot enforce); 11.2 is what is simply not built y
 Run `npm run config:check` with `NODE_ENV=production` before every deploy to catch missing
 or obviously invalid configuration.
 
-## 12. Dependency vulnerability assessment (audited 2026-10-14)
+## 12. Dependency vulnerability assessment (audited 2026-10-14, `braces` re-assessed 2026-10-18)
 
 `npm audit` reported **26** findings. Each was inspected individually rather than
 resolved with `npm audit fix --force`. Result: **26 → 17**, with no major-version
@@ -216,6 +216,12 @@ upgrade applied anywhere.
 > **Updated 2026-10-14 (second pass).** The Next.js/React upgrade described in
 > §12.2 has now landed (see §12.4). Current posture: **0 critical, 0 moderate, 0 low,
 > 7 high — and all 7 high entries are a single root advisory (`braces`)**. See §12.2.
+>
+> **Re-assessed 2026-10-18.** Still **0 critical, 0 moderate, 0 low, 7 high, one root
+> advisory (`braces`)**. There is still no patched release and no compatible dependency
+> path that avoids it. `npm audit`'s suggested `tailwindcss@4` "fix" was tested and does
+> **not** clear the audit (5 high remain). Current evidence, alternatives and the
+> recommended next step: **§12.6**.
 
 ### 12.1 Fixed (safe, backward-compatible)
 
@@ -260,11 +266,13 @@ Verification after the change: `tsc --noEmit` clean, `next lint` clean,
   `postcss-nested`, `postcss-selector-parser`** — build-time CSS toolchain. The
   `postcss-selector-parser` root advisory was cleared by a narrow override to `^7.1.6`.
   The rest remain only as propagation of the single `braces` root cause below.
-- ⚠️ STILL OPEN — **`braces` (high) has no fix at any version** — 3.0.3 is the latest
-  published release and it is still vulnerable (advisory range `<=3.0.3`). Reachable
-  only through Tailwind's build-time globbing and `@next/eslint-plugin-next`. The only
-  remediation npm offers is `tailwindcss@4`, a different engine and config format.
-  **Accepted risk** — see §12.4 for the reachability analysis.
+- ⚠️ STILL OPEN (re-verified 2026-10-18) — **`braces` (high) has no fix at any version**.
+  3.0.3 is the latest published release, and the advisory range is `<=3.0.3` with no
+  first patched version. It is reachable only through Tailwind's build-time globbing and
+  `@next/eslint-plugin-next` (the ESLint rules). Both are devDependencies, and **every**
+  published `@next/eslint-plugin-next`, up to 16.4.2 and the 16.5 canary, pins
+  `fast-glob@3.3.1`. So `tailwindcss@4`, the only remediation npm offers, does not
+  close it. **Accepted risk**: see §12.6 for current evidence and reachability.
 - ✅ RESOLVED — **`prisma` (high), `@prisma/config`, `deepmerge-ts`** — CLI/migrate-time
   only, not the runtime client. Cleared by the narrow `deepmerge-ts → ^8.0.2` override;
   `prisma`/`@prisma/config` were transitive-only entries with no advisory of their own,
@@ -323,46 +331,17 @@ These are intentionally **narrow and targeted**, not broad overrides.
 
 **Accepted risk: `braces` (high, GHSA-vfj7-8cjw-p6xm, CWE-674, CVSS 7.5).**
 
-This is the **only remaining root advisory**. It is accepted, not suppressed, because:
+This is the **only remaining root advisory**. The original 2026-10-14 write-up had three
+statements that the 2026-10-18 re-assessment found inaccurate:
 
-1. **No patched version exists.** The advisory range is `<=3.0.3` and 3.0.3 is the latest
-   published release. An override cannot fix it. Upstream is dormant — `braces` was last
-   published 2024-09-18, so waiting for a fix is not a plan.
-2. **The only remediation npm offers is `tailwindcss@4`** — a different engine and a
-   CSS-first config format that would touch every template file. That is a UI migration,
-   not a security fix, and it directly risks the stability this pass was meant to protect.
+- "Last published 2024-09-18" was the registry metadata date. 3.0.3 was actually
+  published 2024-05-21.
+- "The only remediation is `tailwindcss@4`" is incomplete, because Tailwind 4 alone does
+  not clear the audit.
+- "No production dependency reaches `chokidar`" is wrong. `chokidar@4.0.3` *is* reachable
+  from `@prisma/client`, but chokidar 4 does not depend on `braces`.
 
-**Exposure — verified, not assumed.** "It is only a devDependency" is not by itself an
-argument, so the claim was checked against the actual graph and the actual build output:
-
-- **No production dependency reaches it.** Walking the lockfile from every entry in
-  `dependencies` (not `devDependencies`), there is no path to `braces`, `micromatch`,
-  `fast-glob` or `chokidar`. All four are reachable only via `tailwindcss`,
-  `eslint-config-next` and `prisma` — all devDependencies.
-- **No application code imports it.** `src/` contains no import of `braces`, `micromatch`
-  or `fast-glob`.
-- **It is absent from the production bundle.** After a successful webpack compile, the
-  453 files under `.next/` contain **zero** occurrences of `braces`, `micromatch`,
-  `fast-glob`, `chokidar`, or of braces internals (`expand-range`, `fill-range`,
-  `toRegexRange`, `isBrace`). The vulnerable code is not shipped.
-- **No attacker-controlled input reaches it.** Stack exhaustion (CWE-674) requires a
-  maliciously nested glob pattern. The patterns come from `tailwind.config.js`
-  (developer-authored, committed) and Tailwind internals.
-
-**Residual uncertainty.** The bundle inspection above was performed on a build compiled in
-a sandbox that could not reach `fonts.googleapis.com` (Google Fonts was mocked) and could
-not run `prisma generate` (so type-checking failed). Bundling — which is what determines
-whether `braces` is included — completed successfully, so the inclusion result is sound,
-but that build did not pass as a whole. The authoritative build is CI's, which passes with
-real fonts and a generated client. The exposure argument rests on the dependency-graph and
-bundle analysis above, not on a claim that a dev dependency is automatically harmless.
-
-**Practical risk: low.** A successful attack needs (a) a build-time or lint-time context,
-(b) an attacker-supplied deeply nested glob, and (c) code that passes that glob to braces.
-None of the three holds.
-
-It is recorded here so the `audit` job's failure is explainable at a glance, and so a
-future Tailwind 4 migration can close it deliberately.
+The current, corrected analysis is in **§12.6**.
 
 ### 12.5 CI dependency-audit job status
 
@@ -371,8 +350,9 @@ The `audit` job in `.github/workflows/ci.yml` runs `npm audit --audit-level=high
 high or critical finding remains.
 
 That means **this job is expected to fail while any high finding remains**. As of the
-2026-10-14 upgrade it fails on exactly one root advisory, `braces` (§12.2), which has
-no patched release and no fix short of a `tailwindcss@4` migration.
+2026-10-18 re-assessment it fails on exactly one root advisory, `braces` (§12.6). That
+advisory has no patched release, and **no dependency change clears it**, including a
+`tailwindcss@4` migration, because `@next/eslint-plugin-next` also reaches it.
 
 This is deliberate. The previous arrangement — `npm audit` as the last step of the
 `verify` job with `continue-on-error: true` — had two defects: the step never ran at
@@ -391,6 +371,123 @@ is inspectable without re-running anything.
 
 Do not "fix" a failing audit job by adding broad dependency overrides or by
 re-introducing `continue-on-error`. Remediate §12.2 or record an accepted risk here.
+
+### 12.6 `braces` re-assessment (2026-10-18)
+
+**Outcome: no dependency change.** No patched `braces` release exists, and no compatible
+dependency path avoids it. Every option that would turn the `audit` job green is a fork,
+an incompatible replacement, or a suppression. `package.json` and `package-lock.json` are
+therefore unchanged. The risk stays **accepted and visible**, not suppressed.
+
+#### Advisory (as published upstream, checked 2026-10-18)
+
+| Field | Value |
+|---|---|
+| ID | GHSA-vfj7-8cjw-p6xm / CVE-2026-93687 |
+| Summary | Stack-exhaustion DoS through deeply nested brace patterns |
+| Severity | High, CVSS 3.1 7.5 (`AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H`), CWE-674 |
+| Published / updated | 2026-09-18 / 2026-10-02; not withdrawn |
+| Affected | `braces <= 3.0.3` |
+| First patched version | **none** |
+
+**Upstream status:**
+
+- npm `latest` is still `3.0.3`, published 2024-05-21; there is no newer version or
+  pre-release.
+- The report ([micromatch/braces#70](https://github.com/micromatch/braces/issues/70)) is
+  open. The maintainer has publicly **disputed** it (2026-10-05), arguing that `maxLength`
+  already bounds input and that untrusted globs should never be accepted.
+- Several community fix PRs exist (#79, #82, #87, #88 open; #81, #83, #86, #89 closed
+  unmerged). None is merged. The last commit on the default branch is from 2025-01-19.
+- So a fix may never ship, or may arrive as a maintainer-designed `maxDepth` option.
+
+**Reproduced locally.** On Node 22.22.3 the installed `braces@3.0.3` throws
+`RangeError: Maximum call stack size exceeded` for a 9,803-character, 4,900-deep pattern
+in `expand` mode. That is under the library's hard 10,000-character cap, which callers
+can lower but not raise. The flaw is real. The question is only whether hostile input
+can reach it.
+
+#### Dependency paths (from `package-lock.json`)
+
+```
+tailwindcss@3.4.19 (dev)          ─┬─ chokidar@3.6.0 ── braces@3.0.3
+                                   ├─ micromatch@4.0.8 ── braces@3.0.3
+                                   └─ fast-glob@3.3.3 ── micromatch@4.0.8
+eslint-config-next@15.5.27 (dev)  ── @next/eslint-plugin-next@15.5.27 ── fast-glob@3.3.1 ── micromatch@4.0.8
+```
+
+Latest versions of every intermediate, checked 2026-10-18:
+
+| Package | Latest | Still reaches `braces`? |
+|---|---|---|
+| `micromatch` | 4.0.8 | Yes (`braces ^3.0.3`) |
+| `fast-glob` | 3.3.3 | Yes (`micromatch ^4.0.8`) |
+| `tailwindcss` v3 (`v3-lts`) | 3.4.19 | Yes (chokidar 3, micromatch, fast-glob) |
+| `@next/eslint-plugin-next` | 16.4.2, and canary 16.5.0-canary.17 | **Yes: pins `fast-glob` to exactly `3.3.1` in every release** |
+| `tailwindcss` v4 | 4.3.3 | No |
+
+#### Alternatives assessed
+
+| Option | Clears the audit? | Assessment |
+|---|---|---|
+| Patch/minor bump (`npm update`) | No | Nothing newer exists on any path. |
+| `overrides: braces → <fork or git ref>` | Hides it | Turns an unreviewed community patch into a permanent fork for the project to maintain. npm audit does not version-check git dependencies, so this is closer to suppression than remediation. **Rejected.** |
+| `overrides` replacing `micromatch`/`fast-glob`/`chokidar` | Partly | `chokidar@4` dropped glob support that Tailwind 3's watcher relies on. There is no API-compatible `micromatch`/`fast-glob` without `braces`. A broad, behaviour-changing override. **Rejected.** |
+| `npm audit fix --force` → `tailwindcss@4` | **No (verified)** | In a throwaway copy of the lockfile with `tailwindcss@^4.3.3` + `@tailwindcss/postcss`, `npm audit` still reports **5 high**, via `eslint-config-next` → `@next/eslint-plugin-next` → `fast-glob@3.3.1`. It is also a UI-engine migration (CSS-first config, changed utilities and defaults) touching every styled component. **Not a security fix on its own; not undertaken.** |
+| Tailwind 4 **and** dropping `eslint-config-next` | Yes (verified in a throwaway lockfile: 0 vulnerabilities) | Loses the Next-specific lint rules (`core-web-vitals`, `no-html-link-for-pages`, …) that CI enforces. That is a real quality regression to remove a dev-only, non-reachable code path. **Not recommended.** |
+| Accept, document, monitor (chosen) | No | No production or runtime exposure (below); keeps the audit signal honest. |
+
+#### Exposure (re-verified 2026-10-18 against this commit)
+
+- **Not in the production dependency graph.** `npm ls braces micromatch fast-glob --omit=dev`
+  is empty, and the lockfile marks all three `dev: true`. (`chokidar@4.0.3` *is* reachable
+  from `@prisma/client` → peer `prisma` → `c12`, but chokidar 4 depends only on `readdirp`.
+  The `braces`-dependent `chokidar@3.6.0` is nested under `tailwindcss` and is dev-only.)
+- **Not imported by application code.** `src/`, `scripts/` and `prisma/` contain no import
+  of `braces`, `micromatch`, `fast-glob` or `chokidar`.
+- **Not shipped.** After a full `npm run build`, the 473 files under `.next/` (excluding
+  `.next/cache`) contain **zero** occurrences of `node_modules/braces`, `micromatch`,
+  `fast-glob`, `chokidar`, `fill-range`, `toRegexRange`, `expand-range` or `isBrace`.
+- **No attacker-controlled patterns.** Tailwind globs come from the committed `content`
+  array in `tailwind.config.ts` (`./src/{app,components,features}/**/*.{ts,tsx}`).
+  `@next/eslint-plugin-next` globs come from ESLint settings in the committed
+  `.eslintrc.json`. Both are developer-authored and only run at build or lint time.
+
+**Residual risk: low, build/lint-time only.** Exploitation would need a malicious,
+deeply nested glob committed into `tailwind.config.ts`, an ESLint config or a dependency.
+Anyone who can do that can already run arbitrary code in the build, so `braces` adds no
+meaningful capability. The worst outcome is a crashed local or CI build, not a
+production outage or data exposure.
+
+#### Recommended next steps
+
+1. **Monitor upstream.** When `braces` publishes a fixed 3.0.x, remediation is a
+   **lockfile-only** refresh (`npm update braces`): `micromatch` requires `^3.0.3` and
+   `chokidar@3.6.0` requires `~3.0.2`, so both accept 3.0.4 with no override.
+   If a fix only lands in `braces@4`, re-assess.
+2. **Re-check `@next/eslint-plugin-next`** on each Next.js upgrade. When it stops pinning
+   `fast-glob@3.3.1`, a Tailwind 4 migration becomes one of the actual exits. It should
+   then be planned as a UI change with visual regression testing, not a security hotfix.
+3. **Keep the `audit` job red and honest** until one of the above lands. Any *new*
+   high/critical finding is a regression.
+4. **Optional, owner decision only.** If the permanently red job hides new findings, the
+   owner may adopt a narrowly scoped, **time-boxed** exception. That means matching this
+   exact GHSA ID only, with an expiry date that forces re-review, and failing on any other
+   high/critical finding. This *is* a suppression of a known finding, so it must be an
+   explicit, recorded policy decision. It has deliberately **not** been implemented here.
+
+#### Checks run for this re-assessment (2026-10-18, sandbox, Node 22.22.3 / npm 10.9.8)
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm ci` | ✅ | `--ignore-scripts`; Prisma engines are unreachable here |
+| `npm audit --audit-level=high` | ❌ exit 1, 7 high (all `braces`) | Expected, identical to `main` CI |
+| `npm run schema:check` | ✅ | Text pre-flight only |
+| `npm run typecheck` | ✅ | Against a client from `prisma generate --no-engine` (types only) |
+| `npm run lint` | ✅ | No warnings or errors |
+| `npm test` | ✅ 376 passed, 4 skipped (24 files, 1 skipped) | The PostgreSQL concurrency test self-skips without `PG_INTEGRATION_TESTS` |
+| `npm run build` | ✅ with substitutions | Google Fonts mocked via `NEXT_FONT_GOOGLE_MOCKED_RESPONSES`; client generated with `--no-engine`. Same caveats as §12.3 |
+| `prisma migrate deploy` / `migrate diff` / `migrate status` | ⛔ not run | No PostgreSQL and no Prisma schema-engine download in this sandbox; covered by CI's `migrations` job |
 
 
 ## 13. Fixed defect: security headers were never applied

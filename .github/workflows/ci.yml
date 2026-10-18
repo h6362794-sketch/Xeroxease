@@ -142,9 +142,10 @@ jobs:
         id: audit
         # No `continue-on-error`. The exit status is allowed to propagate so the
         # result is honest. This job is EXPECTED TO FAIL while the documented
-        # Next.js App Router advisories remain open — see SECURITY.md §12.2 for the
-        # reachability analysis and the upgrade plan. Suppressing it to obtain a
-        # green badge would be exactly the wrong trade.
+        # `braces` advisory (GHSA-vfj7-8cjw-p6xm, no patched release, dev/build-time
+        # only) remains open — see SECURITY.md §12.6 for the evidence, reachability
+        # analysis and next steps. Suppressing it to obtain a green badge would be
+        # exactly the wrong trade.
         run: |
           set +e
           npm audit --audit-level=high
