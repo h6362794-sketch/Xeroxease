@@ -44,7 +44,7 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 | POST | `/uploads/abort` | owner | `{ fileId }` | Releases an unverified intent and deletes its object, returning the per-order file slot. Refused (`409`) once a document is verified. |
 | DELETE | `/uploads/:id` | owner | — | Removes an unordered document and its object (`404` if it is not the caller's or is already on an order; `503` if storage refuses the delete, and the document is kept). Audited as `UPLOAD_REMOVED`. |
 | POST | `/uploads` | session | multipart `file` | **Proxy path (development / `local` backend).** Validates extension + MIME + magic bytes + size (≤50 MiB, inclusive) + filename on the real bytes, writes, then creates the row as `COMPLETED`. Bounded by the platform's request-body limit, so unusable for large files on Vercel. |
-| POST | `/admin/uploads/sweep?limit=50` | SUPER_ADMIN, or `Authorization: Bearer $CRON_SECRET` | — | Upload cleanup: releases expired `PENDING` intents, purges unordered documents older than 24 h, and purges order documents past `retentionDays`. Each job is bounded (limit 1–500) and re-runnable. The app has no scheduler; an external one must call it. Audited. |
+| POST | `/admin/uploads/sweep?limit=50` | SUPER_ADMIN session, or scheduler: `Authorization: Bearer $CRON_SECRET` **and** `X-Deploy-Target` = this deployment's `DEPLOY_TARGET` | — | Upload cleanup: releases expired `PENDING` intents, purges unordered documents older than 24 h, and purges order documents past `retentionDays`. Bounded (limit 1–500) and re-runnable. Rate-limited before authentication. A scheduler whose target does not match gets `403 SCHEDULER_TARGET_MISMATCH` (not audited; its run fails). Audited as `UPLOAD_INTENTS_SWEEP` otherwise. |
 | POST | `/documents/analyze` | owner | `{ fileId }` | Runs server-side page/slide-count analysis; stores `pageCount`, `pageCountSource`, `analysisStatus`. Only meaningful once a document is `COMPLETED`. |
 | GET | `/files/:id/download` | owner / ADMIN | — | IDOR-guarded. `410` once retention has deleted the bytes. `supabase`: `307` to a short-lived signed URL (`no-store`, `no-referrer`, `noindex`) so bytes never cross a function body. `local`: streamed response. Non-`COMPLETED` documents 404 for everyone, including admins. `?mode=view` requests inline display. |
 
@@ -76,7 +76,8 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 | GET/POST/PATCH/DELETE | `/admin/payment-qr` | SUPER_ADMIN | Get config / upload image / enable-disable / remove; stored privately; audited. |
 | GET/PATCH | `/admin/settings` | SUPER_ADMIN | Instructions, retention, queue capacity; audited. |
 | GET | `/admin/audit-logs` | SUPER_ADMIN | Filter by action, search, paginate. |
-| POST | `/admin/collection` | ADMIN+ | `{ token, consume }` — verify or consume collection QR (consume completes the order). The Admin → Collection page calls it: check (`consume: false`), then confirm (`consume: true`). |
+| POST | `/admin/collection` | ADMIN+ | `{ token, consume }` — verify or consume collection QR (consume completes the order). The consume audit entry is written in the same transaction. The Admin → Collection page calls it: check (`consume: false`), then confirm (`consume: true`). |
+| POST | `/admin/collection/override` | SUPER_ADMIN only | `{ orderNumber, confirmOrderNumber, reason (20–500 chars), identityChecked: true }` — completes a `READY_FOR_COLLECTION` order whose code cannot be presented, burns the code, and writes `COLLECTION_OVERRIDE` with the reason, in the same transaction. Errors: 400 (rules), 403 (not Super Admin), 404, 409 (not ready, or already used). See SECURITY.md §6.1. |
 
 ## Public
 

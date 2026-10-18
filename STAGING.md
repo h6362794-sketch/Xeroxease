@@ -103,6 +103,7 @@ Required in staging unless marked optional.
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Only with `redis`. Upstash pricing not verified. |
 | `RATE_LIMIT_FAIL_OPEN` | Keep `false`. |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Seed only. Password mandatory with `NODE_ENV=production`. |
+| `CRON_SECRET` | Scheduler bearer, at least 32 characters. Staging Preview only. The same value must be the GitHub `staging` environment secret. Never set on Production by this change. |
 | `DEPLOY_TARGET`, `EXPECTED_SUPABASE_PROJECT_REF` | Staging pin. `DEPLOY_TARGET=staging` and the project ref (not secret). The config check, `guard:target` and the seed refuse any URL not belonging to that project. Preview scope only. |
 | `SEED_STUDENT_EMAIL`, `SEED_STUDENT_PASSWORD` | Optional. The smoke test registers a fresh student. |
 
@@ -114,83 +115,149 @@ Must **not** be set in staging: `ALLOW_DEV_SEED`, `ALLOW_EPHEMERAL_LOCAL_STORAGE
 
 ## 4. Smoke test (manual, step by step)
 
-Use a fresh browser profile for each role. Use a test email that you control.
-For curl steps, copy the `xe_session` cookie value from browser devtools. Never paste it
-into chat, a commit, or a ticket.
+Run this only against the **staging** deployment, with the staging Supabase project, after
+section 2 steps 1–8 and `npm run guard:target` passed in the shell you run from. Stop at the
+first unexpected result and record it in section 6.
+
+**Rules for this test**
+
+- Use a fresh browser profile for each role. Use test emails you control. Use only the
+  test data in this section. Never a real student's documents or payment reference.
+- Payment references: use `TEST-<yyyymmdd>-<n>` (for example `TEST-20261018-01`). Never a real UPI reference.
+- Curl steps: copy the `xe_session` cookie value from devtools into a shell variable that
+  you clear afterwards. Never paste it into chat, a commit, or a ticket. Secrets such as
+  `CRON_SECRET` and `SUPABASE_SERVICE_ROLE_KEY` come from the secret manager into the
+  environment, never typed into a file.
+- Cost: Free plan. Keep test uploads small except where a check says otherwise.
+  Record the result, and do not upload repeatedly to chase a number.
+
+### 4A. Supabase storage checks (UPLOADS.md §8.1)
+
+Run these first, because the rest of the workflow depends on the bucket behaving correctly.
+Record the exact file size used for each.
+
+| Check | Procedure | Expected |
+|---|---|---|
+| 1. Bucket is private | `curl -sS -o /dev/null -w '%{http_code}\n' "$SUPABASE_URL/storage/v1/object/public/$STORAGE_BUCKET/<a key you uploaded>"` with no credentials | Not `200`. Record the code. |
+| 2. Signed upload URL writes only its own path | Mint an intent (S3). Take its signed URL. `PUT` the bytes to that URL. Then `PUT` the same bytes to the same URL with the object name changed to a different key. | First `2xx`. Second refused (`4xx`). |
+| 3. Existing object is not overwritten | `PUT` the same key a second time through a fresh signed URL for that key. | Refused. The first object is unchanged. |
+| 4. `expiresIn` is honoured | Mint an intent. Wait longer than `UPLOAD_INTENT_TTL_SECONDS` (the staging value). `PUT`. | Refused after expiry. |
+| 5. Size is exact | Upload a file of a known size (for example 1 234 567 bytes). Open the object in the Supabase Storage browser and read its size. | The size matches the file, and the size the app shows for it. |
+| 6. Download URL needs its token | Download a file through the app (S3). Copy the redirect. Remove `?token=` and request it. | Refused. |
+| 7. Range reads on large objects | Upload a file over 4.5 MB through the browser (direct path). Complete the upload. | Completion succeeds (the signature probe reads the first 16 bytes). |
+| 8. Global limit matches the app | Upload one byte over `STORAGE_PROVIDER_MAX_FILE_BYTES`, then exactly the limit. | One byte over: refused with a clear message. The limit itself: accepted. Record both sizes. |
+| 9. CORS allows the direct PUT | Upload through the browser with devtools open. | The PUT to the storage host succeeds. No fallback to `/api/uploads`. |
+
+Only after 1–9 pass is direct upload considered live on staging. If any check fails, stop
+and record it in section 6.
+
+### 4B. Full payment workflow (the path students and staff actually use)
 
 **S1 — Student registration.** Open `/register`. Fields: name (2–80), email, phone
 (8–15 digits, `+`, `-`, spaces), regNo (3–32), branch (2–60), section (1–8), year (1–6),
 password (8–128 with lower, upper and digit), confirm password.
-- Expect: account created. Note whether registration signs you in; if not, sign in at `/login`.
+- Expect: account created. If registration does not sign you in, sign in at `/login`.
 - Negative: reuse the email → "An account with this email already exists." Weak password → rejected.
-- Note: this message reveals whether an email, phone or regNo is taken (known, low-medium; see section 6).
+- Note: that message reveals whether an email, phone or regNo is taken (section 6, B7).
 
 **S2 — Login and access control.** Sign in at `/login` as the student. Wrong password →
-generic error. Correct → `/dashboard`. Open `/admin` as the student → must be refused.
-Sign in at `/admin/login` as the Super Admin → `/admin`.
+generic error. Correct → `/dashboard`. Open `/admin` as the student → refused. Sign in at
+`/admin/login` as the Super Admin → `/admin`.
 
 **S3 — Document upload.** Open `/orders/new`.
 - Valid one-page PDF → upload completes; page count appears.
 - A file over the limit → refused with a clear message. Record the size.
 - A `.txt` renamed to `.pdf` → refused (content check).
-- Confirm in devtools that the file bytes go to the storage host, not `/api/uploads`
-  (direct path). Record the largest size that succeeded.
+- In devtools, the file bytes go to the storage host, not `/api/uploads` (direct path).
 - Download your own file from the order page → works. Another student's file ID → 404.
 
 **S4 — Order and payment submission.** Complete the wizard and create an order. Step 5
-asks for a payment reference. Enter a test reference (for example `TEST-S4-0001`).
-- Expect: a success confirmation and the order showing payment under review. (The exact
-  success text was not checked in code review; record what you see.)
+asks for a payment reference. Enter `TEST-<date>-01`.
+- Expect: the order shows payment under review. Record the exact wording you see.
 - Negative: the same reference on a second order → refused (409, reference already used).
 - Negative: `<script>` in the reference → refused.
-- **Known blocker:** if you leave at step 5, you cannot resume payment from the order page
-  (see section 6, B1).
+- Leave step 5 once and come back through the order page: the payment form is there
+  (section 6, B1 is fixed in code; record the result).
 
 **S5 — Admin verification and rejection.** Open `/admin/payments`.
-- Verify the S4 order (note optional) → order moves to `PAYMENT_CONFIRMED` (check
-  `/admin/orders`). The student sees the confirmed payment status.
-- Create a second order and reject its payment with a note of at least 3 characters.
-  Expect: status rejected; student sees the rejection.
-- Then try to resubmit a reference from the student side. **Expected to fail** today (B1);
-  record the result.
+- Order A (from S4): verify, with a note. Expect `PAYMENT_CONFIRMED` in `/admin/orders`.
+  The student sees the confirmed payment status.
+- Order B (create it now, with `TEST-<date>-02`): reject with a note of at least 3 characters.
+  Expect: the student's order page shows the rejection reason in a banner.
+- Student: correct the reference on order B to `TEST-<date>-03` and submit. Expect: the
+  order returns to review. Admin verifies it. (This is the resubmission path, fixed in code.
+  Record the result.)
 
 **S6 — Cancellation.** As the student, place an order at `PAYMENT_PENDING` and cancel it
 with a reason. Expect `CANCELLED`.
-- Admin tries to verify that order → refused (cancelled orders cannot be verified).
-- Student tries to submit a reference on the cancelled order (browser console `fetch` to
+- Admin tries to verify it → refused (cancelled orders cannot be verified).
+- Student submits a reference on it (browser console `fetch` to
   `/api/payment/submit/<id>`) → refused.
-- Note: the cancelled order keeps its payment reference (section 5, item 3).
+- The cancelled order keeps its payment reference (section 5, item 3). This is by design.
 
-**S7 — Collection.** Admin moves a paid order through `PRINTING` → `QUALITY_CHECK` →
-`READY_FOR_COLLECTION` in `/admin/orders`. Student opens the order and clicks
-"Reveal collection code" (this is owner-only and requires `READY_FOR_COLLECTION`).
-Desk consumes the code through the API (there is **no admin screen** for this; B2):
+**S7 — Collection (normal path).** Admin moves a paid order `PRINTING` →
+`QUALITY_CHECK` → `READY_FOR_COLLECTION` in `/admin/orders`. The student opens the order and
+reveals the collection code (owner only; requires `READY_FOR_COLLECTION`). The student
+shows the code to the desk.
+- Desk: open **Admin → Collection**. Paste the code. Check it. Expect the order number and
+  student name. Confirm collected. Expect `COMPLETED` in `/admin/orders`.
+- Expect: the status control does **not** offer `COMPLETED` from `READY_FOR_COLLECTION`
+  (B3 is fixed in code). Try the API directly if you want proof: a status `PATCH` to
+  `COMPLETED` for a ready order → `409`.
+- Re-check the same code on Admin → Collection → Check code → refused (already used).
 
-```
-curl -sS -X POST "https://<staging-host>/api/admin/collection" \
-  -H "Content-Type: application/json" \
-  -H "Origin: https://<staging-host>" \
-  -H "Cookie: xe_session=<admin session value>" \
-  -d '{"token":"<code from student>","consume":true}'
-```
+**S8 — Lost-code override (Super Admin only).** Use a second test order at
+`READY_FOR_COLLECTION`. Do not reveal its code.
+- As an ADMIN (not Super Admin), the override section is not shown, and the API
+  (`POST /api/admin/collection/override`) returns 403.
+- As the Super Admin: enter the order number, type it again, write a reason of at least
+  20 characters, tick "identity checked", submit. Expect the order to be `COMPLETED`.
+- Check Audit Logs: `COLLECTION_OVERRIDE` with your reason.
+- Check the student's order (as the student): the timeline shows the generic message and
+  not the reason. The student's collection code now reads as used.
+- Negative: type a different order number the second time → refused, nothing changes.
 
-- Expect: order becomes `COMPLETED`.
-- Re-run with the same token → refused (single use).
-- Note: `READY_FOR_COLLECTION → COMPLETED` can also be set from the status control with no
-  code (B3).
-
-**S8 — Role gating (curl).** Unauthenticated `GET /api/admin/orders` → 401/403. The same with
+**S9 — Role gating (curl).** Unauthenticated `GET /api/admin/orders` → 401/403. The same with
 a student cookie → 403. `POST` with `-H "Origin: https://evil.example"` → 403
 `CROSS_SITE_REFUSED`.
 
-**S9 — Audit trail.** `/admin/audit-logs` should show `LOGIN`, order, payment and
-collection events from S2–S7. Check that a failed login is recorded.
+**S10 — Audit trail.** `/admin/audit-logs` (Super Admin) should show `LOGIN`, order, payment,
+collection and override events from S2–S8. A failed login is recorded.
 
-**S10 — Headers.** `curl -sI https://<staging-host>/` should show the security headers
+**S11 — Headers.** `curl -sI https://<staging-host>/` should show the security headers
 (HSTS on https, CSP, no-sniff, frame and referrer policies).
 
-**S11 — Provider checks.** Run `UPLOADS.md` §8.1 checks 1–9 against the staging bucket.
-Record the results and the sizes used.
+### 4C. Scheduler and cleanup checks
+
+**C1 — Scheduler refuses the wrong target (safe, no data changes).** From a shell with the
+staging `CRON_SECRET` loaded (not typed):
+
+```
+printf 'Authorization: Bearer %s\nX-Deploy-Target: production\n' "$CRON_SECRET" \
+  | curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H @- \
+    "https://<staging-host>/api/admin/uploads/sweep?limit=1"
+```
+
+Expect `403`. This proves a production-targeted scheduler cannot run against staging.
+
+**C2 — Scheduled run succeeds.** GitHub → Actions → "Upload sweep (scheduled cleanup)" →
+Run workflow. Expect a green run with `upload-sweep: HTTP 200`, and an audit entry
+`UPLOAD_INTENTS_SWEEP` with `trigger: schedule` and `deployTarget: staging`. The app records
+every call made with the scheduler credential as `schedule`, whether the workflow was started by
+the timer or by hand.
+
+**C3 — Abandoned upload is removed (needs 24 hours).** Upload a test file, do not order it,
+and wait at least 24 hours. Run the sweep (C2). Expect: the file row is gone, and the object
+is no longer listed in the Storage browser. Record the times.
+
+**C4 — Student delete (safe, now).** Upload a test file and delete it from the wizard.
+Expect: the file disappears, and the object is removed (same storage check as C3). Audit
+entry `UPLOAD_REMOVED` with `by: student`.
+
+**C5 — Retention (needs 24 hours or more).** In Settings, set `retentionDays` to `1`
+(staging only). Complete a test order. After at least one day, run the sweep. Expect the
+order's document download to return `410` with the retention message, and the object to be
+gone. Set `retentionDays` back to `30`.
 
 ---
 
@@ -224,17 +291,24 @@ Record the results and the sizes used.
 
 ---
 
-## 6. Blockers and known gaps found during preparation
+## 6. Blockers and known gaps (status as of readiness round 2)
 
-| # | Gap | Effect on staging smoke test | Status |
-|---|---|---|---|
-| B1 | Order page "Open payment QR" links to `/orders/new?pay=<id>`. The wizard never reads `pay`, and the reference form lives only in wizard step 5. | Students cannot submit or resubmit a payment reference after leaving step 5 or after a rejection. S5 resubmission fails. | **Not fixed.** Staging prep only. Proposed fix: show the reference form on the order page for `PAYMENT_PENDING`, `PAYMENT_REJECTED` and `PAYMENT_FAILED`, posting to the existing `/api/payment/submit/:id`. Needs approval. |
-| B2 | No admin UI consumes collection codes. Only `POST /api/admin/collection`. | The desk must use the API (S7). | Addressed in code (readiness step C): Admin → Collection page (check, then confirm). Not yet tested in a browser. |
-| B3 | The status control offers `READY_FOR_COLLECTION → COMPLETED` with no collection code. | Bypasses the code check. | Addressed in code (readiness step C): the status route refuses this transition (409) and the table no longer offers it. A collected order that the student cannot show a code for has no completion path; this is an open decision. |
-| B4 | Staging has no Super Admin until the seed runs. | S2 cannot start. | Solved by the seed step (section 2, step 8). |
-| B5 | Dependency audit fails (`braces`, GHSA-vfj7-8cjw-p6xm, no patched version). | CI stays red. | Reported, not suppressed. See section 7. |
-| B6 | Supabase bucket privacy, signed URLs, direct upload end to end, Upstash, and the Free-plan byte limit. | Not verified in this sandbox. | Needs staging run (S3, S11). |
-| B7 | Remaining hardening: login reveals disabled accounts and timing; registration duplicate check reveals email, phone and regNo; CSP allows `unsafe-inline` scripts; an oversize direct object can briefly exist before deletion; no rate limit on upload-intent creation; the Origin check refuses future `/api/` webhooks unless exempted. | Not part of the smoke test. | Open. Low to medium. |
+"In code" means implemented and covered by tests in this sandbox. It does not mean verified on
+staging or in a browser. The staging run in section 4 is the verification.
+
+| # | Gap | Status |
+|---|---|---|
+| B1 | Students could not correct and resubmit a rejected payment reference; the rejection reason was hidden. | **Fixed in code** (`18e753b`). Browser check: S4 and S5 in section 4. |
+| B2 | No admin screen for collection codes. | **Fixed in code** (`84f4870`): Admin → Collection. Browser check: S7. |
+| B3 | The status control could complete a ready order without its code. | **Fixed in code** (`84f4870`): refused with 409. Check: S7. |
+| B4 | Staging has no Super Admin until the seed runs. | Solved by the seed step (section 2, step 8). |
+| B5 | Dependency audit fails (`braces`, GHSA-vfj7-8cjw-p6xm, no patched version). | **Open, kept visible.** Owner decision. Section 7. |
+| B6 | Supabase bucket privacy, signed URLs, direct upload end to end, and the Free-plan byte limit. | **Not verified.** Needs the staging run in section 4A. |
+| B7 | Login reveals disabled accounts and timing; registration duplicate check reveals email, phone and regNo; CSP allows `unsafe-inline` scripts; an oversize direct object can briefly exist before deletion; no rate limit on upload-intent issuance. | Open, low to medium. Accepted for staging; to review before production. |
+| B8 | Retention and abandoned-upload cleanup need a scheduler. | **Code in place** (`7075fd1`, readiness round 2). Not configured anywhere. Setup: DEPLOYMENT.md, "Scheduled upload cleanup". Checks: C1–C5. |
+| B9 | A collected order whose student cannot present the code had no completion path. | **Fixed in code** (readiness round 2): Super Admin override with reason, identity check, typed order number, and audit in the same transaction. Procedure: SECURITY.md §6.1. Check: S8. |
+| B10 | Scheduled cleanup could delete a row whose object still existed (after a crash between claim and delete). | **Fixed in code** (readiness round 2). Covered by a unit test. Not seen on a real database. |
+| B11 | Retention and cleanup were only partly tested against real time (24 h and 1 day). | Deferred. C3 and C5 need real elapsed time. |
 
 ---
 
@@ -255,10 +329,19 @@ Decision for the user before launch:
 
 ---
 
-## 8. Go / no-go for staging (today)
+## 8. Go / no-go
 
-- **Go** for a staging deployment to exercise sections 2–4 and the provider checks, once
-  the [USER] steps are done.
-- **No-go** for production until: B1 is fixed; the audit decision in section 7 is made; the
-  privacy retention promise (section 5, item 4) is implemented in code and its scheduled run is seen working on staging; the
-  nine provider checks and S1–S11 are recorded as passing.
+- **Go for staging** once the [USER] steps in section 2 are done and `npm run guard:target`
+  passes. Staging is then the place to run sections 4A, 4B and 4C.
+- **No-go for production** until all of these are true, each with its evidence recorded:
+  1. Section 4A checks 1–9 pass on the staging bucket (sizes recorded).
+  2. Section 4B S1–S11 pass on staging, including the resubmission (S5) and the lost-code
+     override (S8).
+  3. The scheduler is configured for staging and a run is seen (C1 refused, C2 succeeded).
+     Retention is then checked over real time (C3, C5).
+  4. The audit decision in section 7 is made (accept with a signed risk note and a policy
+     change, or block). Without it the audit job stays red and the branch is not
+     launch-ready.
+  5. The open decisions in PR #9 are answered (see section 5 and the PR description).
+  6. Production has its own `DEPLOY_TARGET=production` and, only if you choose to run
+     retention there, its own scheduler environment. None of that is set by this change.

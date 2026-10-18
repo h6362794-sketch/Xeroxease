@@ -140,6 +140,18 @@ stored or embedded (see `UPLOADS.md` §3).
 - Anti-abuse: duplicate-submission protection, reference validation, per-IP limits, last-4-only in logs.
 - If a real payment provider is added later, plug it in at the verify step — the order model does not need redesign.
 
+### 6.1 Lost collection code: procedure (Super Admin override)
+
+Use only when the student cannot present their collection code. Normally they can reveal it again by signing in to their order.
+
+1. **Try first.** Ask the student to sign in and open the order. Reveal the code there. Most cases end here.
+2. **If they cannot sign in**, check their identity in person against a student ID card whose registration number matches the order. Do this at the desk, not by phone or chat.
+3. **Only a Super Admin** completes the order: Admin → Collection → "Lost collection code". Enter the order number, type it again, write a reason of at least 20 characters (what happened and how identity was checked), and tick "I checked the student's identity in person".
+4. **What the system does**, in one transaction: completes the order, burns its collection code (so it cannot be used later), writes an order event with a generic message, and writes an audit entry (`COLLECTION_OVERRIDE`) with the reason. If the audit entry cannot be written, nothing changes.
+5. **Review:** the reason is in Audit Logs (Super Admin only). The student's timeline does not show it. Review `COLLECTION_OVERRIDE` entries regularly. An unusual number is a signal to investigate.
+
+Limits: the override trusts the desk's identity check. It cannot verify identity. An ADMIN cannot use it. It applies only to `READY_FOR_COLLECTION` orders whose code is unused. Once used, the code cannot be used again, by the override or by a scan.
+
 ## 7. Secrets management
 
 - All secrets via environment variables (`.env.local`, gitignored; `.env.example` documents placeholders).

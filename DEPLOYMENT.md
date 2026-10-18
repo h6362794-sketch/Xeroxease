@@ -96,7 +96,8 @@ Test that you can restore it into a scratch database before you trust it. Also s
 your storage bucket (uploaded documents) — the database references files by key, so a
 database restore without a matching storage restore leaves orders pointing at nothing.
 
-Document retention needs a scheduler, and the app does not run one. Schedule `POST /api/admin/uploads/sweep` (for example, hourly) with the header `Authorization: Bearer <CRON_SECRET>`. Set `CRON_SECRET` to a random value of at least 32 characters, store it only in the platform's secret store, and give the same value to the scheduler. Each run is audited as `UPLOAD_INTENTS_SWEEP` with `trigger: schedule`. Check the sweep report (`retentionFailed`, `unattachedFailed`, `intentsFailed`) after the first runs.
+Document retention needs a scheduler, and the app does not run one. The scheduler setup is in
+"Scheduled upload cleanup" below; read it before enabling retention on any deployment.
 Never run `prisma migrate reset` or `prisma db push --force-reset` against production.
 
 ### Rollback
@@ -156,6 +157,34 @@ the check.
 - [ ] Retention policy configured (Settings → retention days)
 - [ ] Staging only: `DEPLOY_TARGET=staging` and `EXPECTED_SUPABASE_PROJECT_REF` set on the Preview scope; `npm run guard:target` passes; Production must not carry the staging pin
 - [ ] `CRON_SECRET` set (32+ characters) and the upload sweep scheduled; first scheduled run seen in Audit Logs with `trigger: schedule`
+
+## Scheduled upload cleanup
+
+The cleanup is `POST /api/admin/uploads/sweep`. It releases expired upload intents, deletes unordered documents after 24 hours, and deletes order documents after `retentionDays`. Nothing calls it unless you schedule it.
+
+**Vercel cron cannot be used for Preview.** Vercel invokes cron jobs only for production deployments (vercel.com/docs/cron-jobs/quickstart). So the Preview/staging scheduler is an external one. This repository provides `.github/workflows/upload-sweep.yml` for that.
+
+Safety properties (enforced in code, tested):
+
+- A scheduled call needs `Authorization: Bearer <CRON_SECRET>` (at least 32 characters, compared in constant time) **and** `X-Deploy-Target` equal to the receiving deployment's `DEPLOY_TARGET`. A scheduler configured for staging is refused by production with `403 SCHEDULER_TARGET_MISMATCH`, even if its URL is wrong.
+- Without a matching secret the request is treated as a session request, which needs SUPER_ADMIN.
+- Rate limiting happens before authentication, so probes are throttled too.
+- The workflow only ever targets the `staging` GitHub environment. It cannot reach production unless someone deliberately changes it.
+- Each run is audited as `UPLOAD_INTENTS_SWEEP` with `trigger: schedule`. A refused run is not audited: the scheduler's own run fails with HTTP 403, which is where you see it.
+
+**Set up Preview/staging (no production target):**
+
+1. In the app's **Preview** environment: `DEPLOY_TARGET=staging`, `CRON_SECRET=<random, ≥32 characters>`. Do not set these on Production yet.
+2. In GitHub, create the environment `staging` (Settings → Environments). Optional but recommended: add a required reviewer.
+3. In environment `staging`, add **secret** `CRON_SECRET` with exactly the same value as step 1. Add **variables**: `SWEEP_URL` = `https://<staging-host>/api/admin/uploads/sweep`, and `SWEEP_TARGET` = `staging`.
+   Use the **stable branch alias** of the staging preview (the one that does not change with each commit), not a per-deployment URL.
+   **If the staging preview is behind Vercel Deployment Protection**, the scheduler gets a login page (401/403) before the app sees it. Create a Vercel "Protection Bypass for Automation" secret for the project, and add it to the `staging` environment as **secret** `SWEEP_PROTECTION_BYPASS`. It is sent as `x-vercel-protection-bypass`. It clears only Vercel's edge check; the app's own checks still apply. Rotating it requires a new deployment (Vercel's rule).
+4. Test by hand first: Actions → "Upload sweep" → Run workflow. Expect a green run and the log line `upload-sweep: HTTP 200`. Then in Audit Logs, look for `UPLOAD_INTENTS_SWEEP` with `trigger: schedule` and `deployTarget: staging`. Every call made with the scheduler credential is recorded as `schedule`, whether the timer or a manual run started it.
+5. Only then set the repository **variable** `SWEEP_ENABLED` to `true`. Until then the scheduled trigger does nothing.
+
+**Production:** not configured by this change. When you decide to run retention in production, use a separate environment (`production`) with its own `SWEEP_URL`, `SWEEP_TARGET=production` and `CRON_SECRET`, and set `DEPLOY_TARGET=production` on Production. Do that as a deliberate later step with your approval, not as part of staging.
+
+**Free-plan limits:** GitHub scheduled workflows run from the default branch only and may be paused in public repositories after 60 days without activity. Both are noted in the workflow file.
 
 ## Monitoring & operations
 
