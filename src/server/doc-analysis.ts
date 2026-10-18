@@ -21,6 +21,14 @@ export interface AnalysisResult {
 const MAX_PDF_BYTES_FOR_PARSE = 120 * 1024 * 1024; // guard rails
 const MAX_OOXML_BYTES_FOR_PARSE = 120 * 1024 * 1024;
 const MAX_PAGE_COUNT = 100_000;
+/**
+ * Upper bound on the bytes inflated from any single OOXML part. A deflate stream can
+ * expand ~1000:1, so an uncapped `inflateRawSync` lets a ~50 MB upload allocate tens of
+ * GB and crash the process. Real `docProps/app.xml` and `word/document.xml` parts are
+ * far below this; a part over the cap is treated as unreadable and the document goes to
+ * review instead of being trusted.
+ */
+const MAX_INFLATED_PART_BYTES = 32 * 1024 * 1024;
 
 export async function analyzeDocument(storageKey: string, ext: string): Promise<AnalysisResult> {
   try {
@@ -151,7 +159,9 @@ export function readZipEntry(buf: Buffer, entries: ReturnType<typeof listZipEntr
   const dataStart = localOffset + 30 + lNameLen + lExtraLen;
   if (dataStart < 0 || dataStart + compressedSize > buf.length) return null;
   try {
-    return inflateRawSync(buf.subarray(dataStart, dataStart + compressedSize)).toString("utf8");
+    return inflateRawSync(buf.subarray(dataStart, dataStart + compressedSize), {
+      maxOutputLength: MAX_INFLATED_PART_BYTES,
+    }).toString("utf8");
   } catch {
     return null;
   }

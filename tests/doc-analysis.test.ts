@@ -159,6 +159,24 @@ describe("DOCX / PPTX analysis", () => {
   });
 });
 
+describe("decompression bombs", () => {
+  // A few KB of deflate can inflate to gigabytes. Office XML parts are a few KB to a few
+  // MB in practice, so the analyzer must cap what it will inflate instead of trusting the
+  // archive. Without a cap this test allocates ~20 MB per entry and, for a hostile file,
+  // grows until the Node process runs out of memory.
+  it("does not inflate an oversized XML part and falls back to review", async () => {
+    stored = buildZip({
+      // Planted metadata that a successful inflate would trust (COMPLETED, 999 pages).
+      "docProps/app.xml": "<Properties><Pages>999</Pages></Properties>" + "a".repeat(40 * 1024 * 1024),
+      "word/document.xml": "<w:document><w:body/></w:document>",
+    });
+    const res = await docAnalysis.analyzeDocument("k", "docx");
+    expect(res.status).toBe("NEEDS_REVIEW");
+    expect(res.source).toBeNull();
+    expect(res.pageCount).not.toBe(999);
+  });
+});
+
 describe("unparseable formats", () => {
   it("legacy .doc always requires review", async () => {
     stored = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
