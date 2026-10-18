@@ -24,6 +24,7 @@ beforeEach(() => {
     pricePerPage: { toString: () => "1" },
     finishingFee: { toString: () => "0" },
     adminNotes: "Customer is a repeat offender - check ID",
+    paymentNote: "Matched UTR in bank statement",
     paymentVerifiedBy: "admin-42",
     cancelledBy: null,
     collectionTokenHash: "deadbeef",
@@ -47,6 +48,7 @@ describe("GET /api/orders/[id] redaction", () => {
   it("hides admin notes, verifier, token digest and admin actor ids from the owning student", async () => {
     const o = await get();
     expect(o.adminNotes).toBeNull();
+    expect(o.paymentNote).toBeNull();
     expect(o.paymentVerifiedBy).toBeNull();
     expect(o.collectionTokenHash).toBeNull();
     expect(o.user).toBeUndefined();
@@ -59,6 +61,7 @@ describe("GET /api/orders/[id] redaction", () => {
     const o = await get();
     expect(o.adminNotes).toBe("Customer is a repeat offender - check ID");
     expect(o.paymentVerifiedBy).toBe("admin-42");
+    expect(o.paymentNote).toBe("Matched UTR in bank statement");
     expect(o.events[0].actorId).toBe("admin-42");
   });
 });

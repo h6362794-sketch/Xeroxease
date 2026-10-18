@@ -25,6 +25,11 @@ export interface CreateOrderInput {
 export const VERIFIABLE_PAYMENT_STATES = ["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"] as const;
 /** Order states that can never be moved by a payment decision. */
 export const TERMINAL_ORDER_STATES = ["CANCELLED", "FAILED", "COMPLETED"] as const;
+/**
+ * Order states in which a payment decision (verify or reject) is valid. Payment is decided
+ * before printing starts; a decision must never move an order that has moved past payment.
+ */
+export const PAYMENT_DECISION_ORDER_STATES = ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"] as const;
 
 export class OrderError extends Error {
   status: number;
@@ -223,9 +228,25 @@ async function createOrderRow(params: {
             totalAmount: price.total,
             status: "PAYMENT_PENDING",
             paymentStatus: "PAYMENT_PENDING",
-            files: { connect: files.map((f) => ({ id: f.id })) },
           },
         });
+        // Link the documents conditionally, inside this transaction. The earlier check in
+        // createOrder runs outside it, so two concurrent requests (a double-click, two tabs)
+        // could both pass it and both connect the same file, silently moving it off the
+        // first order. The predicate `orderId: null` makes the second writer match nothing:
+        // count !== files.length rolls back the whole order.
+        const { count: linked } = await tx.uploadedFile.updateMany({
+          where: {
+            id: { in: files.map((f) => f.id) },
+            uploaderId: input.userId,
+            orderId: null,
+            status: "COMPLETED",
+          },
+          data: { orderId: o.id },
+        });
+        if (linked !== files.length) {
+          throw new OrderError("One or more documents are already attached to an order.", 409);
+        }
         await tx.orderEvent.create({
           data: {
             orderId: o.id,
@@ -321,6 +342,12 @@ export async function adminUpdateOrderStatus(params: {
     patch.paymentStatus = "PAYMENT_CONFIRMED";
     patch.paymentVerifiedBy = params.actorId;
     patch.paymentVerifiedAt = now;
+  }
+  // Sending an order back to payment pending must also clear a payment that was under
+  // review. Otherwise the order says "pending" while the payment says "under review", and the
+  // student's resubmission is answered "already under review" with nothing for them to do.
+  if (params.toStatus === "PAYMENT_PENDING" && (VERIFIABLE_PAYMENT_STATES as readonly string[]).includes(order.paymentStatus)) {
+    patch.paymentStatus = "PAYMENT_PENDING";
   }
   if (params.toStatus === "COMPLETED") patch.completedAt = now;
   if (params.toStatus === "CANCELLED") {

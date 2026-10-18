@@ -44,6 +44,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       : {
           adminNotes: null,
           paymentVerifiedBy: null,
+          paymentNote: null,
           cancelledBy: null,
           collectionTokenHash: null,
           events: order.events.map((e) => ({ ...e, actorId: null, actorRole: null })),

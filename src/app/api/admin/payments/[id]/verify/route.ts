@@ -4,7 +4,7 @@ import { apiError, parseBody, withErrorHandling } from "@/server/api-utils";
 import { z } from "zod";
 import { audit } from "@/server/audit";
 import { NOTIFY } from "@/server/notifications";
-import { OrderError, TERMINAL_ORDER_STATES, VERIFIABLE_PAYMENT_STATES } from "@/server/orders";
+import { OrderError, PAYMENT_DECISION_ORDER_STATES, VERIFIABLE_PAYMENT_STATES } from "@/server/orders";
 
 const schema = z.object({ note: z.string().trim().max(500).optional().or(z.literal("")) });
 
@@ -20,7 +20,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (order.paymentStatus === "PAYMENT_CONFIRMED") {
       return Response.json({ ok: true, idempotent: true });
     }
-    if ((TERMINAL_ORDER_STATES as readonly string[]).includes(order.status)) {
+    if (!(PAYMENT_DECISION_ORDER_STATES as readonly string[]).includes(order.status)) {
       return apiError(`This order is ${order.status.toLowerCase().replace(/_/g, " ")} and its payment cannot be verified.`, 409);
     }
     if (!["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"].includes(order.paymentStatus)) {
@@ -36,7 +36,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           where: {
             id: order.id,
             paymentStatus: { in: [...VERIFIABLE_PAYMENT_STATES] },
-            status: { notIn: [...TERMINAL_ORDER_STATES] },
+            status: { in: [...PAYMENT_DECISION_ORDER_STATES] },
           },
           data: {
             paymentStatus: "PAYMENT_CONFIRMED",

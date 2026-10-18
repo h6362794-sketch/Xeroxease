@@ -6,13 +6,22 @@
 -- removed) and the database rejects a second order that presents the same reference.
 --
 -- This migration is ADDITIVE ONLY: one unique index on an existing nullable column.
--- It FAILS (and changes nothing) if two orders already share a payment_ref. That is
--- deliberate. Before running it against production, check for duplicates:
+-- It FAILS (and changes nothing) if two orders share a payment_ref byte-for-byte. That is
+-- deliberate. It does NOT catch legacy rows that differ only by case or whitespace
+-- ("utr 1234" and "UTR1234" are the same payment to the application but different strings
+-- to this index). Before running it against production, run the NORMALISED check, which
+-- matches the application's normalisation (remove all whitespace, upper-case):
 --
---   SELECT payment_ref, count(*) FROM orders
---    WHERE payment_ref IS NOT NULL GROUP BY payment_ref HAVING count(*) > 1;
+--   SELECT upper(regexp_replace(payment_ref, '\s+', '', 'g')) AS normalized_ref,
+--          count(*) AS orders, array_agg(order_number ORDER BY order_number) AS order_numbers
+--     FROM orders
+--    WHERE payment_ref IS NOT NULL
+--    GROUP BY 1
+--   HAVING count(*) > 1;
 --
 -- The query must return zero rows. If it does not, decide which order owns each
--- reference, clear the others' payment_ref deliberately, then deploy.
+-- reference, clear the others' payment_ref deliberately (an UPDATE, after a backup), then
+-- deploy. Do not edit the references in this migration: changing payment evidence without a
+-- person deciding which order it belongs to is the wrong default.
 
 CREATE UNIQUE INDEX "orders_payment_ref_key" ON "orders"("payment_ref");

@@ -5,7 +5,7 @@ import { RATE_LIMITS } from "@/server/rate-limit";
 import { paymentSubmitSchema } from "@/server/validation";
 import { audit } from "@/server/audit";
 import { notify, NOTIFY } from "@/server/notifications";
-import { OrderError } from "@/server/orders";
+import { OrderError, TERMINAL_ORDER_STATES } from "@/server/orders";
 import { DUPLICATE_REFERENCE_MESSAGE, isPaymentReferenceConflict } from "@/server/payment-reference";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -22,6 +22,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const order = await prisma.order.findUnique({ where: { id } });
     if (!order) return apiError("Order not found.", 404);
     if (order.userId !== user.id) return apiError("You can only submit payment for your own orders.", 403);
+    // Cancelled, failed or completed orders keep their payment fields. Without this check a
+    // submission would move the order back into review, reviving a cancelled order.
+    if ((TERMINAL_ORDER_STATES as readonly string[]).includes(order.status)) {
+      return apiError("This order is no longer open for payment.", 409);
+    }
 
     // Idempotency & duplicate protection
     if (order.paymentStatus === "PAYMENT_CONFIRMED") {
@@ -51,6 +56,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             id: order.id,
             userId: user.id,
             paymentStatus: { in: ["PAYMENT_PENDING", "PAYMENT_REJECTED", "PAYMENT_FAILED"] },
+            status: { notIn: [...TERMINAL_ORDER_STATES] },
           },
           data: {
             paymentStatus: "PAYMENT_UNDER_REVIEW",

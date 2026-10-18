@@ -11,7 +11,7 @@ const ADMIN = { id: "admin-1", role: "ADMIN" as const };
 
 const findUnique = vi.fn();
 const updateMany = vi.fn();
-const paymentEventCreate = vi.fn(async () => ({}));
+const paymentEventCreate = vi.fn(async (_args: { data: Record<string, unknown> }) => ({}));
 const orderEventCreate = vi.fn(async () => ({}));
 
 vi.mock("@/lib/prisma", () => ({
@@ -64,7 +64,7 @@ describe("PATCH /api/admin/payments/[id]/verify", () => {
     expect(res.status).toBe(200);
     const where = updateMany.mock.calls[0][0].where;
     expect(where.paymentStatus).toEqual({ in: ["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"] });
-    expect(where.status).toEqual({ notIn: ["CANCELLED", "FAILED", "COMPLETED"] });
+    expect(where.status).toEqual({ in: ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"] });
     expect(paymentEventCreate).toHaveBeenCalledTimes(1);
   });
 
@@ -85,7 +85,7 @@ describe("PATCH /api/admin/payments/[id]/verify", () => {
     const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
     const res = await PATCH(json({ note: "" }), ctx);
     expect(res.status).toBe(409);
-    expect(updateMany.mock.calls[0][0].where.status).toEqual({ notIn: ["CANCELLED", "FAILED", "COMPLETED"] });
+    expect(updateMany.mock.calls[0][0].where.status).toEqual({ in: ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"] });
     expect(paymentEventCreate).not.toHaveBeenCalled();
   });
 
@@ -106,7 +106,7 @@ describe("PATCH /api/admin/payments/[id]/reject", () => {
     const res = await PATCH(json({ note: "Amount does not match" }), ctx);
     expect(res.status).toBe(200);
     const args = updateMany.mock.calls[0][0];
-    expect(args.where.status).toEqual({ notIn: ["CANCELLED", "FAILED", "COMPLETED"] });
+    expect(args.where.status).toEqual({ in: ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"] });
     expect(args.data.paymentStatus).toBe("PAYMENT_REJECTED");
   });
 
@@ -117,5 +117,44 @@ describe("PATCH /api/admin/payments/[id]/reject", () => {
     const res = await PATCH(json({ note: "Amount does not match" }), ctx);
     expect(res.status).toBe(409);
     expect(paymentEventCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("payment decisions only move pre-print orders", () => {
+  it("verify writes only while the order is still pre-print", async () => {
+    findUnique.mockResolvedValue({ ...live });
+    const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
+    await PATCH(json({ note: "" }), ctx);
+    expect(updateMany.mock.calls[0][0].where.status).toEqual({
+      in: ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"],
+    });
+  });
+
+  it("verify refuses an order that has already moved past payment", async () => {
+    findUnique.mockResolvedValue({ ...live, status: "PRINTING" });
+    const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
+    const res = await PATCH(json({ note: "" }), ctx);
+    expect(res.status).toBe(409);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("reject refuses an order that has already moved past payment", async () => {
+    findUnique.mockResolvedValue({ ...live, status: "PRINTING" });
+    const { PATCH } = await import("@/app/api/admin/payments/[id]/reject/route");
+    const res = await PATCH(json({ note: "Amount does not match" }), ctx);
+    expect(res.status).toBe(409);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("a rejected reference is released", () => {
+  it("clears paymentRef on the rejected order so the reference is not held by a wrong order", async () => {
+    findUnique.mockResolvedValue({ ...live });
+    const { PATCH } = await import("@/app/api/admin/payments/[id]/reject/route");
+    const res = await PATCH(json({ note: "Amount does not match" }), ctx);
+    expect(res.status).toBe(200);
+    expect(updateMany.mock.calls[0][0].data.paymentRef).toBeNull();
+    // The audit trail keeps the reference it was rejected with.
+    expect(paymentEventCreate.mock.calls[0][0].data.reference).toBe("UTR1234");
   });
 });

@@ -20,16 +20,37 @@ type FileRow = {
 let files: FileRow[] = [];
 let created: any[] = [];
 let orderSeq = 0;
+/** When true, the pre-check reads a stale snapshot (as a concurrent request would). */
+let staleRead = false;
+
+/** Shared conditional link: matches only rows still unattached, like the real predicate. */
+function linkFiles(where: { id: { in: string[] }; uploaderId: string; orderId: null; status: string }, orderId: string) {
+  let count = 0;
+  for (const f of files) {
+    if (
+      where.id.in.includes(f.id) &&
+      f.uploaderId === where.uploaderId &&
+      f.orderId === where.orderId &&
+      f.status === where.status
+    ) {
+      f.orderId = orderId;
+      count++;
+    }
+  }
+  return { count };
+}
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     uploadedFile: {
       findMany: async (args: { where: { id: { in: string[] }; uploaderId: string } }) =>
-        files.filter(
-          (f) =>
-            args.where.id.in.includes(f.id) &&
-            f.uploaderId === args.where.uploaderId
-        ),
+        files
+          .filter(
+            (f) =>
+              args.where.id.in.includes(f.id) &&
+              f.uploaderId === args.where.uploaderId
+          )
+          .map((f) => (staleRead ? { ...f, orderId: null } : f)),
     },
     order: {
       findFirst: async () => (orderSeq > 0 ? { orderNumber: `XE-2026-${String(orderSeq).padStart(6, "0")}` } : null),
@@ -42,20 +63,36 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: async () => ({ count: 1 }),
     },
     orderEvent: { create: async () => ({}) },
-    $transaction: (fn: (tx: any) => Promise<unknown>) =>
-      fn({
-        order: {
-          findFirst: async () =>
-            orderSeq > 0 ? { orderNumber: `XE-2026-${String(orderSeq).padStart(6, "0")}` } : null,
-          create: async (args: { data: any }) => {
-            orderSeq++;
-            const row = { id: `order-${orderSeq}`, ...args.data };
-            created.push(row);
-            return row;
+    $transaction: async (fn: (tx: any) => Promise<unknown>) => {
+      // Real transactions roll back on throw; mirror that for the rows the callback wrote.
+      const snapshotFiles = files.map((f) => ({ ...f }));
+      const snapshotCreated = created.length;
+      const snapshotSeq = orderSeq;
+      try {
+        return await fn({
+          order: {
+            findFirst: async () =>
+              orderSeq > 0 ? { orderNumber: `XE-2026-${String(orderSeq).padStart(6, "0")}` } : null,
+            create: async (args: { data: any }) => {
+              orderSeq++;
+              const row = { id: `order-${orderSeq}`, ...args.data };
+              created.push(row);
+              return row;
+            },
           },
-        },
-        orderEvent: { create: async () => ({}) },
-      }),
+          uploadedFile: {
+            updateMany: async (args: { where: any; data: { orderId: string } }) =>
+              linkFiles(args.where, args.data.orderId),
+          },
+          orderEvent: { create: async () => ({}) },
+        });
+      } catch (err) {
+        files = snapshotFiles;
+        created.length = snapshotCreated;
+        orderSeq = snapshotSeq;
+        throw err;
+      }
+    },
   },
 }));
 
@@ -107,6 +144,7 @@ beforeEach(async () => {
   files = [];
   created = [];
   orderSeq = 0;
+  staleRead = false;
   vi.resetModules();
   orders = await import("@/server/orders");
 });
@@ -191,3 +229,23 @@ describe("order numbers", () => {
     expect(order.orderNumber).toMatch(/^XE-\d{4}-\d{6}$/);
   });
 });
+
+describe("document linking is atomic (double-order race)", () => {
+  it("a second order for a document another request just claimed is refused and leaves no order", async () => {
+    files = [{ id: "file-1", uploaderId: USER, pageCount: 3, analysisStatus: "COMPLETED", status: "COMPLETED", orderId: null }];
+
+    const first = await orders.createOrder(baseInput);
+    expect(first).toBeTruthy();
+    expect(files[0].orderId).toBe(created[0].id);
+
+    // The second request's pre-check reads the file as unattached (it raced the first).
+    staleRead = true;
+    await expect(orders.createOrder(baseInput)).rejects.toMatchObject({ status: 409 });
+    staleRead = false;
+
+    // Only the first order exists, and the document still belongs to it.
+    expect(created).toHaveLength(1);
+    expect(files[0].orderId).toBe(created[0].id);
+  });
+});
+

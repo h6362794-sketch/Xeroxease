@@ -4,7 +4,7 @@ import { apiError, parseBody, withErrorHandling } from "@/server/api-utils";
 import { z } from "zod";
 import { audit } from "@/server/audit";
 import { NOTIFY } from "@/server/notifications";
-import { OrderError, TERMINAL_ORDER_STATES, VERIFIABLE_PAYMENT_STATES } from "@/server/orders";
+import { OrderError, PAYMENT_DECISION_ORDER_STATES, VERIFIABLE_PAYMENT_STATES } from "@/server/orders";
 
 const schema = z.object({
   note: z.string().trim().min(3, "A rejection note is required.").max(500),
@@ -19,6 +19,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const order = await prisma.order.findUnique({ where: { id } });
     if (!order) return apiError("Order not found.", 404);
+    if (!(PAYMENT_DECISION_ORDER_STATES as readonly string[]).includes(order.status)) {
+      return apiError(`This order is ${order.status.toLowerCase().replace(/_/g, " ")} and its payment cannot be rejected.`, 409);
+    }
     if (!["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"].includes(order.paymentStatus)) {
       return apiError("Payment is not in a rejectable state.", 409);
     }
@@ -29,12 +32,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           where: {
             id: order.id,
             paymentStatus: { in: [...VERIFIABLE_PAYMENT_STATES] },
-            status: { notIn: [...TERMINAL_ORDER_STATES] },
+            status: { in: [...PAYMENT_DECISION_ORDER_STATES] },
           },
           data: {
             paymentStatus: "PAYMENT_REJECTED",
             status: "PAYMENT_PENDING", // back to pending so student can resubmit
             paymentNote: data.note,
+            // Release the rejected reference. It was judged not to validate this order, and
+            // leaving it here would keep another order's real payment reference reserved
+            // (the reuse check would refuse that order's own submission). The PaymentEvent
+            // keeps the reference for the audit trail.
+            paymentRef: null,
           },
         });
         if (count !== 1) {

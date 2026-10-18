@@ -109,4 +109,30 @@ describe("POST /api/payment/submit/[id]", () => {
     expect(res.status).toBe(422);
     expect(orderFindUnique).not.toHaveBeenCalled();
   });
+
+  it("refuses payment for a cancelled order and does not revive it into review", async () => {
+    orderFindUnique.mockResolvedValue({
+      id: ORDER_ID,
+      orderNumber: "XE-2026-000001",
+      userId: USER.id,
+      status: "CANCELLED",
+      // Cancelling does not touch the payment fields, so they still look submittable.
+      paymentStatus: "PAYMENT_PENDING",
+      totalAmount: 120,
+    });
+    const res = await submit("UTR12345678");
+    expect(res.status).toBe(409);
+    expect(txOrderUpdateMany).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("the conditional write itself excludes terminal orders (race with a cancel)", async () => {
+    txOrderUpdateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await submit("UTR12345678");
+    expect(txOrderUpdateMany.mock.calls[0][0].where.status).toEqual({
+      notIn: ["CANCELLED", "FAILED", "COMPLETED"],
+    });
+    expect(res.status).toBe(409);
+    expect(txPaymentEventCreate).not.toHaveBeenCalled();
+  });
 });

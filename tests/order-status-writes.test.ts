@@ -114,6 +114,14 @@ describe("adminUpdateOrderStatus", () => {
     ).rejects.toBeInstanceOf(OrderError);
     expect(paymentEventCreate).not.toHaveBeenCalled();
   });
+
+  it("sending an order back to payment pending clears a payment that was under review", async () => {
+    const { adminUpdateOrderStatus } = await import("@/server/orders");
+    findUnique.mockResolvedValue({ ...ORDER, status: "PAYMENT_UNDER_REVIEW", paymentStatus: "PAYMENT_UNDER_REVIEW" });
+    await adminUpdateOrderStatus({ orderId: ORDER.id, toStatus: "PAYMENT_PENDING", actorId: "admin-1", actorRole: "ADMIN" });
+    expect(updateMany.mock.calls[0][0].data).toMatchObject({ status: "PAYMENT_PENDING", paymentStatus: "PAYMENT_PENDING" });
+    expect(paymentEventCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe("cancelOrder", () => {
@@ -144,4 +152,5 @@ describe("cancelOrder", () => {
     ).rejects.toBeInstanceOf(OrderError);
     expect(updateMany).not.toHaveBeenCalled();
   });
+
 });
