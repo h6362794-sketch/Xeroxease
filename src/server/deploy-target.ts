@@ -44,13 +44,34 @@ function hostOf(raw: string): string {
   }
 }
 
-/** True only for this project's direct host or its pooler user (`postgres.<ref>`). */
+// Supabase's shared connection pooler. Its host does not name a project; the project is chosen by
+// the username suffix (`postgres.<ref>`). So for this host the username is the identity, and it is
+// accepted only together with the host check below. A username alone is never enough.
+const POOLER_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.pooler\.supabase\.com$/;
+const PROJECT_TOKEN = /(?<![a-z])[a-z]{20}(?![a-z])/g;
+
+/**
+ * True only when the connection string's host identifies this project:
+ *   - the project's own direct host (`db.<ref>.supabase.co`) or API host (`<ref>.supabase.co`), or
+ *   - a Supabase pooler host whose username is exactly `postgres.<ref>`.
+ * Refused: another project's host even with this project's username; any other 20-letter project
+ * token in the username, path or query (for example a routing option); unparseable input.
+ */
 function connectionTargets(raw: string, ref: string): boolean {
   try {
     const url = new URL(raw);
     const host = url.hostname.toLowerCase();
     const user = decodeURIComponent(url.username);
-    return host === `db.${ref}.supabase.co` || host === `${ref}.supabase.co` || user === `postgres.${ref}`;
+
+    // Any other project named anywhere in the routing parts is a mismatch.
+    const routing = `${user} ${decodeURIComponent(url.pathname)} ${decodeURIComponent(url.search)}`;
+    for (const token of routing.match(PROJECT_TOKEN) ?? []) {
+      if (token !== ref) return false;
+    }
+
+    if (host === `db.${ref}.supabase.co` || host === `${ref}.supabase.co`) return true;
+    if (POOLER_HOST.test(host)) return user === `postgres.${ref}`;
+    return false;
   } catch {
     return false;
   }

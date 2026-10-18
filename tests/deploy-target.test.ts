@@ -83,6 +83,41 @@ describe("evaluateDeployTarget", () => {
     }
   });
 
+  it("rejects a matching pooler username on another project's direct host", () => {
+    const url = `postgresql://postgres.${STAGING}:${PASSWORD}@db.${OTHER}.supabase.co:5432/postgres`;
+    const r = evaluateDeployTarget(staged({ databaseUrl: url, directUrl: url }));
+    expect(r.problems).toEqual([
+      "DATABASE_URL does not belong to EXPECTED_SUPABASE_PROJECT_REF.",
+      "DIRECT_URL does not belong to EXPECTED_SUPABASE_PROJECT_REF.",
+    ]);
+  });
+
+  it("rejects a matching pooler username on a host that is not Supabase", () => {
+    const url = `postgresql://postgres.${STAGING}:${PASSWORD}@pooler.evil.example:6543/postgres`;
+    expect(evaluateDeployTarget(staged({ databaseUrl: url })).problems).toEqual([
+      "DATABASE_URL does not belong to EXPECTED_SUPABASE_PROJECT_REF.",
+    ]);
+  });
+
+  it("rejects a pooler host whose username names another project", () => {
+    const url = `postgresql://postgres.${OTHER}:${PASSWORD}@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres`;
+    expect(evaluateDeployTarget(staged({ databaseUrl: url })).problems).toEqual([
+      "DATABASE_URL does not belong to EXPECTED_SUPABASE_PROJECT_REF.",
+    ]);
+  });
+
+  it("rejects another project named in the query string, even on this project's host", () => {
+    const url = `postgresql://postgres.${STAGING}:${PASSWORD}@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?options=reference%3D${OTHER}`;
+    expect(evaluateDeployTarget(staged({ databaseUrl: url })).problems).toEqual([
+      "DATABASE_URL does not belong to EXPECTED_SUPABASE_PROJECT_REF.",
+    ]);
+  });
+
+  it("still accepts this project's pooler with ordinary connection options", () => {
+    const url = `postgresql://postgres.${STAGING}:${PASSWORD}@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&sslmode=require`;
+    expect(evaluateDeployTarget(staged({ databaseUrl: url }))).toEqual({ active: true, problems: [] });
+  });
+
   it("treats an unparseable URL as not belonging to the project", () => {
     const r = evaluateDeployTarget(staged({ databaseUrl: "not a url" }));
     expect(r.problems).toEqual(["DATABASE_URL does not belong to EXPECTED_SUPABASE_PROJECT_REF."]);
