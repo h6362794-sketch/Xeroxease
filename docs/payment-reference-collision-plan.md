@@ -29,8 +29,22 @@ Nothing in this repository changes existing payment evidence.
    deliberate for now, because a bank could issue both forms.
 
 Read-only counts from an earlier round (raw equality, not normalised): 0 duplicate
-`payment_ref` values in the Supabase project. The normalised query in the migration file has
-**not** been run against any database in this round.
+`payment_ref` values in the Supabase project. The normalised query in the migration file was
+run in round 5 against the **staging** project only (ref `vjwvvoczyuebtowbnuqf`, confirmed by the
+owner as the staging database), using read-only `SELECT`s that return counts only, on 2026-10-18:
+
+| Check | Result |
+| --- | --- |
+| Rows with a non-null `payment_ref` | 2 |
+| Rows with any whitespace in `payment_ref` | 0 |
+| Rows with any character outside printable ASCII | 0 |
+| Normalised collision groups (the migration's query, counts only) | 0 groups, 0 orders |
+| Raw duplicate groups (what the unique index compares) | 0 |
+
+The production database has **not** been checked. Its state is unknown, and the same read-only
+counts must be run there, by the owner or with explicit approval, before any decision under section 3.
+Zero staging collisions does not approve the migration: option A still needs owner sign-off, and the
+migration has not been applied or recorded anywhere.
 
 ## 3. Options (decision needed)
 
