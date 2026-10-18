@@ -2,7 +2,6 @@ import { createHmac, randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { env } from "./env";
 import { NOTIFY } from "./notifications";
-import { audit } from "./audit";
 
 /**
  * Collection QR — signed verification mechanism.
@@ -127,6 +126,17 @@ export async function consumeCollectionToken(
         actorRole: actor.role,
       },
     });
+    // Inside the transaction: a completion that cannot be audited is not committed.
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        actorRole: actor.role,
+        action: "ORDER_COLLECTED_VIA_QR",
+        targetType: "ORDER",
+        targetId: order.id,
+        metadata: { orderNumber: order.orderNumber },
+      },
+    });
 
     return { orderId: order.id, userId: order.userId, orderNumber: order.orderNumber };
   });
@@ -134,14 +144,6 @@ export async function consumeCollectionToken(
   if ("orderId" in outcome) {
     // Side effects only after the transaction has committed.
     await NOTIFY.orderCompleted(outcome.userId, outcome.orderNumber, outcome.orderId);
-    await audit({
-      actorId: actor.id,
-      actorRole: actor.role,
-      action: "ORDER_COLLECTED_VIA_QR",
-      targetType: "ORDER",
-      targetId: outcome.orderId,
-      metadata: { orderNumber: outcome.orderNumber },
-    });
     return { ok: true, orderId: outcome.orderId };
   }
 
@@ -150,4 +152,120 @@ export async function consumeCollectionToken(
 
 export function newOpaqueToken(): string {
   return randomBytes(24).toString("base64url");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Lost collection code: Super Admin override.
+//
+// Used only when a student cannot show their code (for example, they cannot sign in to reveal it)
+// and staff have confirmed the student's identity in person. Rules, all enforced here and not only
+// in the route:
+//   * SUPER_ADMIN only, and the order must be READY_FOR_COLLECTION with its code unused;
+//   * a reason of at least 20 characters, and an explicit "identity checked in person" confirmation;
+//   * the desk retypes the order number, so the wrong order cannot be completed by mistake;
+//   * the code is burned in the same conditional write, so it cannot be used afterwards;
+//   * the reason goes to the audit log only (the student timeline shows a generic message), and the
+//     audit row is written in the same transaction: no audit entry, no override.
+// ---------------------------------------------------------------------------------------------
+
+export class CollectionOverrideError extends Error {
+  status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export const OVERRIDE_REASON_MIN = 20;
+export const OVERRIDE_REASON_MAX = 500;
+export const OVERRIDE_GENERIC_MESSAGE = "Completed by Super Admin override (collection code not presented).";
+
+export interface LostCodeOverrideInput {
+  actor: { id: string; role: string };
+  /** The order number the desk entered (order numbers are unique). */
+  orderNumber: string;
+  /** The same order number, typed a second time. Must match `orderNumber`. */
+  confirmOrderNumber: string;
+  /** Free text, required. Stored in the audit log only. */
+  reason: string;
+  /** Must be true: the student's identity was checked in person. */
+  identityChecked: boolean;
+  now?: Date;
+}
+
+export async function overrideLostCollectionCode(
+  input: LostCodeOverrideInput
+): Promise<{ orderId: string; orderNumber: string }> {
+  if (input.actor.role !== "SUPER_ADMIN") {
+    throw new CollectionOverrideError("Only a Super Admin can complete an order without its collection code.", 403);
+  }
+  if (input.identityChecked !== true) {
+    throw new CollectionOverrideError("Confirm that you checked the student's identity in person.", 400);
+  }
+  const orderNumber = input.orderNumber.trim();
+  if (!orderNumber || orderNumber !== input.confirmOrderNumber.trim()) {
+    throw new CollectionOverrideError("The order number does not match the order. Nothing was changed.", 400);
+  }
+  const reason = input.reason.trim();
+  if (reason.length < OVERRIDE_REASON_MIN || reason.length > OVERRIDE_REASON_MAX) {
+    throw new CollectionOverrideError(
+      `Give a reason of ${OVERRIDE_REASON_MIN} to ${OVERRIDE_REASON_MAX} characters.`,
+      400
+    );
+  }
+
+  const now = input.now ?? new Date();
+  const result = await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { orderNumber },
+      select: { id: true, status: true, orderNumber: true, userId: true, collectionTokenUsedAt: true },
+    });
+    if (!order) throw new CollectionOverrideError("Order not found.", 404);
+    if (order.status !== "READY_FOR_COLLECTION") {
+      throw new CollectionOverrideError("Only an order that is ready for collection can be completed this way.", 409);
+    }
+
+    // Conditional on the state that was just checked, including the unused code. Of two desks
+    // racing (one override, one code scan) exactly one matches.
+    const { count } = await tx.order.updateMany({
+      where: { id: order.id, status: "READY_FOR_COLLECTION", collectionTokenUsedAt: null },
+      data: { status: "COMPLETED", completedAt: now, collectionTokenUsedAt: now },
+    });
+    if (count !== 1) {
+      throw new CollectionOverrideError("This order was already collected or changed. Refresh and check it.", 409);
+    }
+
+    await tx.orderEvent.create({
+      data: {
+        orderId: order.id,
+        type: "STATUS_CHANGE",
+        fromStatus: "READY_FOR_COLLECTION",
+        toStatus: "COMPLETED",
+        message: OVERRIDE_GENERIC_MESSAGE,
+        actorId: input.actor.id,
+        actorRole: input.actor.role,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId: input.actor.id,
+        actorRole: input.actor.role,
+        action: "COLLECTION_OVERRIDE",
+        targetType: "ORDER",
+        targetId: order.id,
+        metadata: {
+          orderNumber: order.orderNumber,
+          reason,
+          identityChecked: true,
+          collectionCodeBurned: true,
+        },
+      },
+    });
+
+    return { orderId: order.id, orderNumber: order.orderNumber, userId: order.userId };
+  });
+
+  // Notify only after the transaction has committed.
+  await NOTIFY.orderCompleted(result.userId, result.orderNumber, result.orderId);
+  return { orderId: result.orderId, orderNumber: result.orderNumber };
 }

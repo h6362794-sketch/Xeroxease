@@ -33,11 +33,13 @@ type Tx = {
     }) => Promise<{ count: number }>;
   };
   orderEvent: { create: (args: { data: unknown }) => Promise<void> };
+  auditLog: { create: (args: { data: unknown }) => Promise<void> };
 };
 
 import { createHmac } from "crypto";
 
 const events: unknown[] = [];
+const auditRows: unknown[] = [];
 let orders: OrderRow[] = [];
 let rowLocks = new Map<string, Promise<unknown>>();
 
@@ -73,6 +75,11 @@ function makeTx(): Tx {
     orderEvent: {
       create: async (args) => {
         events.push(args.data);
+      },
+    },
+    auditLog: {
+      create: async (args) => {
+        auditRows.push(args.data);
       },
     },
   };
