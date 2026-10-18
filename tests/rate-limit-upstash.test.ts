@@ -36,6 +36,9 @@ beforeEach(() => {
   cfg.RATE_LIMIT_STORAGE = "redis";
   cfg.RATE_LIMIT_FAIL_OPEN = false;
   cfg.UPSTASH_REDIS_REST_URL = "https://example-upstash.invalid/";
+  // Restore the token too: the "credentials are missing" test empties it, and a leaked empty token
+  // made every later test fail closed before fetch was called.
+  cfg.UPSTASH_REDIS_REST_TOKEN = "test-token-not-real";
   respond = () => json([{ result: 1 }, { result: 1 }, { result: 60 }]);
   vi.stubGlobal(
     "fetch",
@@ -122,5 +125,57 @@ describe("store failures with RATE_LIMIT_FAIL_OPEN=true are an explicit opt-out"
     respond = () => new Response("", { status: 503 });
     const r = await check();
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("store failure modes not covered above (mocked transport only)", () => {
+  it("refuses when the request times out (AbortSignal.timeout rejects with a TimeoutError)", async () => {
+    respond = () => Promise.reject(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    const r = await check();
+    expect(r.ok).toBe(false);
+    expect(r.retryAfterSec).toBeGreaterThan(0);
+    // The request carries a timeout signal, so a hung store cannot hold a request open forever.
+    expect(calls[0].init.signal).toBeDefined();
+  });
+
+  it("refuses a 200 whose body is a JSON object rather than the transaction array", async () => {
+    respond = () => json({ result: [1, 1, 60] });
+    const r = await check();
+    expect(r.ok).toBe(false);
+  });
+
+  it("refuses a 200 whose body is JSON null", async () => {
+    respond = () => json(null);
+    const r = await check();
+    expect(r.ok).toBe(false);
+  });
+
+  it("never logs a transport error message, which may echo the request URL or token", async () => {
+    respond = () => Promise.reject(new TypeError("fetch failed for test-token-not-real at example-upstash.invalid"));
+    await check();
+    const logged = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(logged).not.toContain("test-token-not-real");
+    expect(logged).not.toContain("example-upstash.invalid");
+  });
+
+  it("allows a request that lands exactly on the limit, and refuses the next one", async () => {
+    respond = () => json([{ result: LIMIT }, { result: 1 }, { result: 60 }]);
+    expect((await check()).ok).toBe(true);
+    respond = () => json([{ result: LIMIT + 1 }, { result: 1 }, { result: 60 }]);
+    expect((await check()).ok).toBe(false);
+  });
+
+  it("falls back to the window length when the TTL reply is not a positive number", async () => {
+    respond = () => json([{ result: 1 }, { result: 1 }, { result: -1 }]);
+    const r = await check();
+    expect(r.ok).toBe(true);
+    respond = () => json([{ result: LIMIT + 1 }, { result: 1 }, { result: -1 }]);
+    expect(await check()).toMatchObject({ ok: false, retryAfterSec: 60 });
+  });
+
+  it("with RATE_LIMIT_FAIL_OPEN=true, a malformed reply is an explicit opt-out and is allowed", async () => {
+    cfg.RATE_LIMIT_FAIL_OPEN = true;
+    respond = () => json({ result: "not an array" });
+    expect((await check()).ok).toBe(true);
   });
 });
