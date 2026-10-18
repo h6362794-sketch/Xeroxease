@@ -128,7 +128,7 @@ stored or embedded (see `UPLOADS.md` §3).
 - Authoritative sources are used where they exist: pdf-lib's page tree for PDFs and `ppt/slides/slideN.xml` part counting for PPTX. `docProps/app.xml` (`<Pages>`/`<Slides>`) is used as a secondary source.
 - Heuristic sources are returned as **estimates with `NEEDS_REVIEW`**, never as verified counts: raw-byte `/Type /Page` counting for PDFs that cannot be parsed, and rendered/explicit page-break counting for DOCX with no stored page count.
 - Legacy OLE2 `.doc`/`.ppt` cannot be parsed reliably and always return `NEEDS_REVIEW`.
-- `NEEDS_REVIEW` is not a dead end: the document owner can confirm the count (`PATCH /api/documents/:id/pagecount` → `USER_CONFIRMED`), and administrators can correct it (`PATCH /api/admin/orders/:id/files/:fileId/pagecount` → `ADMIN_VERIFIED`). Both are audited.
+- `NEEDS_REVIEW` is not a dead end: the document owner can confirm the count before ordering (`PATCH /api/documents/:id/pagecount` → `USER_CONFIRMED`, audited, refused once the document is on an order). Administrators **cannot** change the page count of a document on an order: `PATCH /api/admin/orders/:id/files/:fileId/pagecount` refuses every correction with `409 ORDER_PRICED` and writes nothing, because the order is priced from that count and no reviewed repricing policy exists. Any future correction needs a reviewed, transactional, audited repricing policy.
 - Order creation rejects any document that is not `COMPLETED`, so an estimate can never be priced.
 - Pricing uses only server-verified counts and is computed exclusively in `src/server/pricing.ts`. Client-side estimates are display-only and the client never submits a price.
 

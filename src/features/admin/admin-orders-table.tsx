@@ -180,7 +180,6 @@ function OrderManageModal({ order, onClose, onChanged }: { order: AdminOrder; on
   const [nextStatus, setNextStatus] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [corrections, setCorrections] = useState<Record<string, string>>({});
 
   const options = NEXT_STATUS_OPTIONS[order.status] ?? [];
 
@@ -204,28 +203,6 @@ function OrderManageModal({ order, onClose, onChanged }: { order: AdminOrder; on
     }
   }
 
-  async function correctPageCount(fileId: string) {
-    const value = corrections[fileId];
-    if (!value || Number(value) < 1) {
-      toast("Enter a valid page count.", "error");
-      return;
-    }
-    setBusy(true);
-    try {
-      await api(`/api/admin/orders/${order.id}/files/${fileId}/pagecount`, {
-        method: "PATCH",
-        json: { fileId, pageCount: Number(value) },
-      });
-      toast("Page count corrected (audited).", "success");
-      const d = await api<{ order: { files: NonNullable<typeof detail>["files"] } }>(`/api/orders/${order.id}`);
-      setDetail(d.order);
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Correction failed.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <Modal open onClose={onClose} title={`Manage ${order.orderNumber}`} wide>
       <div className="space-y-5">
@@ -244,7 +221,7 @@ function OrderManageModal({ order, onClose, onChanged }: { order: AdminOrder; on
           {order.paymentRef && <p>Payment ref: <span className="font-mono text-white">{order.paymentRef}</span></p>}
         </div>
 
-        {/* Files + page count correction */}
+        {/* Files and their page counts (read-only: a count on a placed order cannot be corrected) */}
         <div>
           <p className="text-sm font-bold text-white mb-2">Documents & page counts</p>
           <div className="space-y-2">
@@ -266,17 +243,9 @@ function OrderManageModal({ order, onClose, onChanged }: { order: AdminOrder; on
                     <Eye className="h-4 w-4" />
                   </a>
                 </div>
-                <div className="flex gap-2 items-end">
-                  <div className="flex-1">
-                    <Label htmlFor={`pc-${f.id}`}>Correct page count</Label>
-                    <Input
-                      id={`pc-${f.id}`} type="number" min={1} placeholder={f.pageCount != null ? String(f.pageCount) : "e.g. 24"}
-                      value={corrections[f.id] ?? ""}
-                      onChange={(e) => setCorrections((c) => ({ ...c, [f.id]: e.target.value }))}
-                    />
-                  </div>
-                  <Button size="sm" onClick={() => correctPageCount(f.id)} loading={busy}>Save</Button>
-                </div>
+                <p className="text-[11px] text-zinc-500">
+                  Fixed when the order was placed: the order is priced from this count. Page counts cannot be corrected here.
+                </p>
               </div>
             ))}
           </div>

@@ -62,7 +62,7 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 |---|---|---|---|
 | GET | `/admin/orders` | ADMIN+ | `?q=&status=&paymentStatus=&sort=&dir=&page=` server-side pagination. |
 | PATCH | `/admin/orders/:id/status` | ADMIN+ | `{ status, note? }` — validates legal transitions; audited; generates collection token on READY. Refuses `READY_FOR_COLLECTION → COMPLETED` (409): collect with the code instead. |
-| PATCH | `/admin/orders/:id/files/:fileId/pagecount` | ADMIN+ | `{ pageCount }` — sets `ADMIN_VERIFIED`; audited. |
+| PATCH | `/admin/orders/:id/files/:fileId/pagecount` | ADMIN+ | `{ fileId, pageCount }`. **Always refused** with `409 ORDER_PRICED` and no write: a document on an order is priced from its page count, and no reviewed repricing policy exists. Validation (422) and ownership (404) are still checked first. |
 | GET | `/admin/payments?state=` | ADMIN+ | Queue: PENDING_REVIEW / CONFIRMED / REJECTED. |
 | PATCH | `/admin/payments/:id/verify` | ADMIN+ | Marks `PAYMENT_CONFIRMED`; audited; notifies student. |
 | PATCH | `/admin/payments/:id/reject` | ADMIN+ | `{ note }` required; back to pending; audited. |

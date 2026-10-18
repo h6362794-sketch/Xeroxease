@@ -21,7 +21,7 @@ Built with Next.js 15, React 19, TypeScript (strict), Tailwind CSS, Framer Motio
 
 ### Admins (no public admin signup — provisioned by Super Admin)
 - **Dashboard** with 12 live metrics, status distribution, recent feedback
-- **Order management**: search, filter (status/payment), sort, pagination, status transitions (server-validated), page-count correction (audited), secure file access
+- **Order management**: search, filter (status/payment), sort, pagination, status transitions (server-validated), read-only page counts on placed orders (corrections are refused; see SECURITY.md), secure file access
 - **Payment verification**: review/verify/reject with notes
 - **Feedback analytics**: average rating, distribution, moderation (Super Admin)
 - **User management**: search, disable/enable (Super Admin), create admin accounts (Super Admin)
