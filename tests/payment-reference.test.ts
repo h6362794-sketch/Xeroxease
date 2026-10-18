@@ -30,6 +30,11 @@ describe("isPaymentReferenceConflict", () => {
   it("recognises a unique violation on payment_ref only", () => {
     expect(isPaymentReferenceConflict({ code: "P2002", meta: { target: ["payment_ref"] } })).toBe(true);
     expect(isPaymentReferenceConflict({ code: "P2002", meta: { target: ["order_number"] } })).toBe(false);
+    // The field name, the column name, or the index name all identify the reference index.
+    expect(isPaymentReferenceConflict({ code: "P2002", meta: { target: "orders_payment_ref_key" } })).toBe(true);
+    expect(isPaymentReferenceConflict({ code: "P2002", meta: { target: ["paymentRef"] } })).toBe(true);
+    // A missing target must not be read as a payment-reference conflict.
+    expect(isPaymentReferenceConflict({ code: "P2002", meta: {} })).toBe(false);
     expect(isPaymentReferenceConflict(new Error("boom"))).toBe(false);
   });
 });

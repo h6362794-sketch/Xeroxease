@@ -23,7 +23,8 @@ export function isPaymentReferenceConflict(err: unknown): boolean {
   if (e.code !== "P2002") return false;
   const target = e.meta?.target;
   const fields = Array.isArray(target) ? target.map(String) : target ? [String(target)] : [];
-  return fields.some((f) => f === "payment_ref" || f === "paymentRef");
+  // Prisma reports the field (paymentRef / payment_ref) or, for some adapters, the index name.
+  return fields.some((f) => f === "payment_ref" || f === "paymentRef" || f === "orders_payment_ref_key");
 }
 
 export const DUPLICATE_REFERENCE_MESSAGE =
