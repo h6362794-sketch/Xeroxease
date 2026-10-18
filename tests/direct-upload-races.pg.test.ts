@@ -115,6 +115,17 @@ describe.skipIf(!ENABLED)("direct-upload races (real PostgreSQL)", () => {
     }
   }
 
+  /** Like settle, for documents.ts, which throws DocumentError for its refusals. */
+  async function settleDoc<T>(fn: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; code: string }> {
+    const docs = await import("@/server/documents");
+    try {
+      return { ok: true, value: await fn() };
+    } catch (err) {
+      if (err instanceof docs.DocumentError) return { ok: false, code: String(err.status) };
+      throw err;
+    }
+  }
+
   async function newIntent(opts: { expired?: boolean } = {}) {
     const intent = await svc.createUploadIntent({
       actor,
@@ -388,6 +399,65 @@ describe.skipIf(!ENABLED)("direct-upload races (real PostgreSQL)", () => {
       expect(purge).toBe("purged");
       expect(after).toBeNull();
       expect(store.objects.has(key)).toBe(false);
+    }
+  });
+
+  // --- student page-count correction vs order link ------------------------------------
+
+  it("a student's own page-count correction and order attachment race on one confirmed document: the priced count never changes silently", async () => {
+    const docs = await import("@/server/documents");
+    for (let round = 0; round < 5; round++) {
+      const order = await newOrder(`corr-${round}`);
+      const { fileId, key } = await newIntent();
+      // A USER_CONFIRMED count on a COMPLETED document: the only state a student may still correct.
+      await db.uploadedFile.update({
+        where: { id: fileId },
+        data: {
+          status: "COMPLETED",
+          verifiedAt: new Date(),
+          analysisStatus: "COMPLETED",
+          pageCount: 3,
+          pageCountSource: "USER_CONFIRMED",
+        },
+      });
+      const priced = await rowById(fileId); // the count the order price would be computed from
+
+      const [correction, link] = await Promise.all([
+        settleDoc(() => docs.confirmFilePageCount({ fileId, userId, pageCount: 5 })),
+        db.uploadedFile.updateMany({
+          where: {
+            id: fileId,
+            uploaderId: userId,
+            orderId: null,
+            status: "COMPLETED",
+            purgedAt: null,
+            analysisStatus: priced.analysisStatus,
+            pageCount: priced.pageCount,
+          },
+          data: { orderId: order.id },
+        }),
+      ]);
+
+      const after = await rowById(fileId);
+      const linked = link.count === 1;
+      if (linked) {
+        // The order was linked, so the correction must have been refused and the priced count kept.
+        expect(correction.ok, `round ${round}: correction succeeded after the order linked`).toBe(false);
+        expect(after.orderId).toBe(order.id);
+        expect(after.pageCount).toBe(3);
+      } else {
+        // The correction won, so the order must not have linked to the old count.
+        expect(after.orderId).toBeNull();
+        expect(after.pageCount).toBe(5);
+        expect(correction.ok, `round ${round}: correction should have applied`).toBe(true);
+      }
+      // Invariant for every round: a linked document is priced at exactly the count it carries.
+      if (after.orderId) expect(after.pageCount).toBe(priced.pageCount);
+      expect(store.objects.has(key)).toBe(true);
+
+      await db.uploadedFile.deleteMany({ where: { uploaderId: userId } });
+      await db.order.deleteMany({ where: { userId } });
+      store.objects.clear();
     }
   });
 });

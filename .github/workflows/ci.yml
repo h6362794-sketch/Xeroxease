@@ -125,7 +125,12 @@ jobs:
       # unset, so this step cannot pass without running its tests. See the file header for what
       # the test does and does not prove.
       - name: Direct-upload races (independent connections, PostgreSQL 16)
-        run: npx vitest run tests/direct-upload-races.pg.test.ts --reporter=verbose
+        # Proof of execution is in this step's own result, not only its log: the JSON report must show
+        # exactly 9 tests passed, with 0 skipped, failed or todo (scripts/assert-vitest-report.mjs).
+        # If the file ever gains or loses a test, update the 9 below in the same change.
+        run: |
+          npx vitest run tests/direct-upload-races.pg.test.ts --reporter=verbose --reporter=json --outputFile.json=pg-race-report.json
+          node scripts/assert-vitest-report.mjs pg-race-report.json 9
 
   audit:
     name: Dependency audit (critical and high)
