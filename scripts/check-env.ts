@@ -85,6 +85,10 @@ add("SESSION_SECRET length >= 32", "required", secret.length >= 32, "Shorter sec
 
 // Scheduled upload cleanup (POST /api/admin/uploads/sweep). Without it, retention is not enforced.
 const cron = value("CRON_SECRET");
+if (cron.length >= 32) {
+  // A scheduler is honoured only when DEPLOY_TARGET matches its X-Deploy-Target header.
+  add("DEPLOY_TARGET set when CRON_SECRET is set", "recommended", value("DEPLOY_TARGET") !== "", "Without DEPLOY_TARGET, every scheduled sweep is refused (403). Set staging or production.");
+}
 if (production) {
   add(
     "CRON_SECRET length >= 32",

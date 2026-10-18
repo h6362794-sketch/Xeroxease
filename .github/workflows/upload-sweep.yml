@@ -1,0 +1,46 @@
+name: Upload sweep (scheduled cleanup)
+
+# Runs the document cleanup against ONE deployment: the one named by the `staging` GitHub
+# environment. Production is never targeted from this workflow.
+#
+#   * URL, target and secret come only from the `staging` environment (SWEEP_URL, SWEEP_TARGET,
+#     CRON_SECRET). Nothing here names a production host.
+#   * The receiving app refuses a scheduler whose X-Deploy-Target does not equal its own
+#     DEPLOY_TARGET (src/server/cron-auth.ts), so a mis-pointed URL is refused, and audited.
+#   * Nothing runs until the repository variable SWEEP_ENABLED is "true".
+#   * The request itself is made by scripts/run-upload-sweep.sh, which is tested in CI.
+#
+# Scheduled workflows run from the default branch only, and GitHub may pause scheduled workflows
+# in a public repository after 60 days without activity. Use "Run workflow" to test by hand.
+# Setup: DEPLOYMENT.md, "Scheduled upload cleanup".
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upload-sweep-staging
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Run upload sweep (staging)
+    if: vars.SWEEP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run one sweep pass
+        env:
+          SWEEP_URL: ${{ vars.SWEEP_URL }}
+          SWEEP_TARGET: ${{ vars.SWEEP_TARGET }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          # Optional: only if the staging deployment sits behind Vercel Deployment Protection.
+          SWEEP_PROTECTION_BYPASS: ${{ secrets.SWEEP_PROTECTION_BYPASS }}
+        run: bash scripts/run-upload-sweep.sh
