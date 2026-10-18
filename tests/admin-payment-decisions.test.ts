@@ -60,7 +60,7 @@ describe("PATCH /api/admin/payments/[id]/verify", () => {
   it("confirms a live order and writes the payment record", async () => {
     findUnique.mockResolvedValue({ ...live });
     const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
-    const res = await PATCH(json({ note: "" }), ctx);
+    const res = await PATCH(json({ note: "Matched UTR in bank statement" }), ctx);
     expect(res.status).toBe(200);
     const where = updateMany.mock.calls[0][0].where;
     expect(where.paymentStatus).toEqual({ in: ["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"] });
@@ -71,7 +71,7 @@ describe("PATCH /api/admin/payments/[id]/verify", () => {
   it("refuses to verify an order the student cancelled while under review", async () => {
     findUnique.mockResolvedValue({ ...live, status: "CANCELLED" });
     const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
-    const res = await PATCH(json({ note: "" }), ctx);
+    const res = await PATCH(json({ note: "Matched UTR in bank statement" }), ctx);
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/cancelled/i);
     expect(updateMany).not.toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe("PATCH /api/admin/payments/[id]/verify", () => {
     // Simulate the race: the order is cancelled between the read and the write.
     updateMany.mockResolvedValueOnce({ count: 0 });
     const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
-    const res = await PATCH(json({ note: "" }), ctx);
+    const res = await PATCH(json({ note: "Matched UTR in bank statement" }), ctx);
     expect(res.status).toBe(409);
     expect(updateMany.mock.calls[0][0].where.status).toEqual({ in: ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"] });
     expect(paymentEventCreate).not.toHaveBeenCalled();
@@ -93,9 +93,36 @@ describe("PATCH /api/admin/payments/[id]/verify", () => {
     findUnique.mockResolvedValue({ ...live });
     updateMany.mockResolvedValueOnce({ count: 0 });
     const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
-    const res = await PATCH(json({ note: "" }), ctx);
+    const res = await PATCH(json({ note: "Matched UTR in bank statement" }), ctx);
     expect(res.status).toBe(409);
     expect(paymentEventCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("verification requires a meaningful note", () => {
+  it.each([[""], ["   "], ["ok"]])("refuses a verification note of %j before any write", async (note) => {
+    findUnique.mockResolvedValue({ ...live });
+    const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
+    const res = await PATCH(json({ note }), ctx);
+    expect(res.status).toBe(422); // schema validation, as elsewhere in the API
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(paymentEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request with no note field at all", async () => {
+    findUnique.mockResolvedValue({ ...live });
+    const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
+    const res = await PATCH(json({}), ctx);
+    expect(res.status).toBe(422); // schema validation, as elsewhere in the API
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts a note of three characters after trimming", async () => {
+    findUnique.mockResolvedValue({ ...live });
+    const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
+    const res = await PATCH(json({ note: "  UTR  " }), ctx);
+    expect(res.status).toBe(200);
+    expect(paymentEventCreate.mock.calls[0][0].data.note).toBe("UTR");
   });
 });
 
@@ -124,7 +151,7 @@ describe("payment decisions only move pre-print orders", () => {
   it("verify writes only while the order is still pre-print", async () => {
     findUnique.mockResolvedValue({ ...live });
     const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
-    await PATCH(json({ note: "" }), ctx);
+    await PATCH(json({ note: "Matched UTR in bank statement" }), ctx);
     expect(updateMany.mock.calls[0][0].where.status).toEqual({
       in: ["ORDER_PLACED", "PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW"],
     });
@@ -133,7 +160,7 @@ describe("payment decisions only move pre-print orders", () => {
   it("verify refuses an order that has already moved past payment", async () => {
     findUnique.mockResolvedValue({ ...live, status: "PRINTING" });
     const { PATCH } = await import("@/app/api/admin/payments/[id]/verify/route");
-    const res = await PATCH(json({ note: "" }), ctx);
+    const res = await PATCH(json({ note: "Matched UTR in bank statement" }), ctx);
     expect(res.status).toBe(409);
     expect(updateMany).not.toHaveBeenCalled();
   });

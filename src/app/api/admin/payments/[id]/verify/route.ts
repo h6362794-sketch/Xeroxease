@@ -7,7 +7,11 @@ import { NOTIFY } from "@/server/notifications";
 import { OrderError, PAYMENT_DECISION_ORDER_STATES, VERIFIABLE_PAYMENT_STATES } from "@/server/orders";
 import { isTransitionAllowed } from "@/lib/order-status";
 
-const schema = z.object({ note: z.string().trim().max(500).optional().or(z.literal("")) });
+// A verification is a money decision. Like a rejection, it needs a meaningful reason on record:
+// the desk writes how the payment was checked, and that note is kept in the payment record.
+const schema = z.object({
+  note: z.string().trim().min(3, "A verification note is required (for example, how the payment was checked).").max(500),
+});
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {

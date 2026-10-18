@@ -147,11 +147,11 @@ export function AdminPayments() {
           Confirm that <span className="font-bold text-white">{formatCurrencyINR(verifyRow?.amount ?? 0)}</span> was received
           for reference <span className="font-mono">{verifyRow?.paymentRef ?? "—"}</span>.
         </p>
-        <Label htmlFor="vnote">Verification note (optional)</Label>
+        <Label htmlFor="vnote" required>Verification note</Label>
         <Textarea id="vnote" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Verified against bank statement" />
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={() => setVerifyRow(null)}>Cancel</Button>
-          <Button variant="success" size="sm" onClick={verify} loading={busy}>Confirm payment</Button>
+          <Button variant="success" size="sm" onClick={verify} loading={busy} disabled={note.trim().length < 3}>Confirm payment</Button>
         </div>
       </Modal>
 
