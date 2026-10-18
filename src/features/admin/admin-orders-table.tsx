@@ -292,8 +292,19 @@ function OrderManageModal({ order, onClose, onChanged }: { order: AdminOrder; on
                 <option value="">Select new status…</option>
                 {options.map((s) => <option key={s} value={s}>{s.replaceAll("_", " ")}</option>)}
               </Select>
-              <Input placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
-              <Button className="w-full" onClick={updateStatus} loading={busy} disabled={!nextStatus}>
+              <Input
+                placeholder={nextStatus === "PAYMENT_CONFIRMED" ? "Reason (required): why is payment confirmed without a review?" : "Note (optional)"}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={500}
+                aria-required={nextStatus === "PAYMENT_CONFIRMED"}
+              />
+              <Button
+                className="w-full"
+                onClick={updateStatus}
+                loading={busy}
+                disabled={!nextStatus || (nextStatus === "PAYMENT_CONFIRMED" && !note.trim())}
+              >
                 Apply status change
               </Button>
             </>

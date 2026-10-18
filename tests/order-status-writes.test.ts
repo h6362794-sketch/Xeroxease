@@ -61,6 +61,7 @@ describe("adminUpdateOrderStatus", () => {
       toStatus: "PAYMENT_CONFIRMED",
       actorId: "admin-1",
       actorRole: "ADMIN",
+      note: "Matched UTR in bank statement",
     });
     const args = updateMany.mock.calls[0][0];
     expect(args.where).toEqual({ id: ORDER.id, status: "PAYMENT_PENDING" });
@@ -71,6 +72,30 @@ describe("adminUpdateOrderStatus", () => {
     });
     expect(paymentEventCreate).toHaveBeenCalledTimes(1);
     expect(paymentEventCreate.mock.calls[0][0].data).toMatchObject({ type: "VERIFIED", actorId: "admin-1" });
+  });
+
+  it("refuses to confirm payment through the status control without a reason", async () => {
+    const { adminUpdateOrderStatus, OrderError } = await import("@/server/orders");
+    await expect(
+      adminUpdateOrderStatus({ orderId: ORDER.id, toStatus: "PAYMENT_CONFIRMED", actorId: "admin-1", actorRole: "ADMIN" })
+    ).rejects.toBeInstanceOf(OrderError);
+    await expect(
+      adminUpdateOrderStatus({ orderId: ORDER.id, toStatus: "PAYMENT_CONFIRMED", actorId: "admin-1", actorRole: "ADMIN", note: "   " })
+    ).rejects.toBeInstanceOf(OrderError);
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(paymentEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("records the reason on the payment record when one is given", async () => {
+    const { adminUpdateOrderStatus } = await import("@/server/orders");
+    await adminUpdateOrderStatus({
+      orderId: ORDER.id,
+      toStatus: "PAYMENT_CONFIRMED",
+      actorId: "admin-1",
+      actorRole: "ADMIN",
+      note: "UTR matched bank SMS",
+    });
+    expect(paymentEventCreate.mock.calls[0][0].data.note).toBe("Confirmed via order status control: UTR matched bank SMS");
   });
 
   it("does not write a payment record for ordinary transitions", async () => {
@@ -85,7 +110,7 @@ describe("adminUpdateOrderStatus", () => {
     const { adminUpdateOrderStatus, OrderError } = await import("@/server/orders");
     updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(
-      adminUpdateOrderStatus({ orderId: ORDER.id, toStatus: "PAYMENT_CONFIRMED", actorId: "admin-1", actorRole: "ADMIN" })
+      adminUpdateOrderStatus({ orderId: ORDER.id, toStatus: "PAYMENT_CONFIRMED", actorId: "admin-1", actorRole: "ADMIN", note: "lost race test" })
     ).rejects.toBeInstanceOf(OrderError);
     expect(paymentEventCreate).not.toHaveBeenCalled();
   });

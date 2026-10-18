@@ -295,6 +295,11 @@ export async function adminUpdateOrderStatus(params: {
   actorRole: string;
   note?: string;
 }): Promise<void> {
+  // Confirming payment through the status control bypasses the payment-review step, so the
+  // reason must be recorded. Checked here, not only in the route, so every caller is covered.
+  if (params.toStatus === "PAYMENT_CONFIRMED" && !params.note?.trim()) {
+    throw new OrderError("Enter a note explaining why payment is being confirmed without a payment review.", 400);
+  }
   const order = await prisma.order.findUnique({ where: { id: params.orderId } });
   if (!order) throw new OrderError("Order not found", 404);
   if (!canActorChangeStatus(params.actorRole)) {
@@ -363,9 +368,7 @@ export async function adminUpdateOrderStatus(params: {
           type: "VERIFIED",
           amount: order.totalAmount,
           reference: order.paymentRef,
-          note: params.note
-            ? `Confirmed via order status control: ${params.note}`
-            : "Confirmed via order status control (no payment-review step)",
+          note: `Confirmed via order status control: ${params.note!.trim()}`,
         },
       });
     }
