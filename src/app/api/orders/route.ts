@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/server/auth";
 import { apiError, enforceRateLimit, json, parseBody, withErrorHandling } from "@/server/api-utils";
 import { RATE_LIMITS } from "@/server/rate-limit";
-import { orderConfigSchema } from "@/server/validation";
+import { orderCreateSchema } from "@/server/validation";
 import { createOrder } from "@/server/orders";
 
 export async function GET(req: Request) {
@@ -60,17 +60,20 @@ export async function POST(req: Request) {
     const limited = await enforceRateLimit(req, RATE_LIMITS.orderCreate, "order-create");
     if (limited) return limited;
 
-    const data = await parseBody(req, orderConfigSchema);
-    const fileIds = (await req
-      .clone()
-      .json()
-      .then((b: { fileIds?: unknown }) => (Array.isArray(b?.fileIds) ? b.fileIds : []))
-      .catch(() => [])) as string[];
-    if (!fileIds.length) return apiError("Attach at least one document.", 400);
+    // Read and validate the body exactly once, `fileIds` included.
+    //
+    // This used to be two reads: `parseBody` consumed the stream via `req.json()`,
+    // then `req.clone().json()` fetched `fileIds`. A Request whose body has been
+    // read is "disturbed", and cloning it throws `TypeError: unusable`
+    // *synchronously* — the `.catch(() => [])` chained onto the clone never saw it,
+    // so every POST /api/orders died with a 500 before `createOrder` was reached.
+    // Keeping both fields in one schema also means `fileIds` is validated instead
+    // of being coerced out of unvalidated JSON.
+    const data = await parseBody(req, orderCreateSchema);
 
     const order = await createOrder({
       userId: user.id,
-      fileIds: fileIds.filter((f): f is string => typeof f === "string").slice(0, 10),
+      fileIds: data.fileIds,
       paperSize: data.paperSize,
       colorMode: data.colorMode,
       sides: data.sides,

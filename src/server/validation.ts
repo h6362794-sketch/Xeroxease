@@ -5,6 +5,7 @@ import {
   ALLOWED_UPLOAD_TYPES,
   COLOR_MODES,
   FINISHING_OPTIONS,
+  MAX_FILES_PER_ORDER,
   PAPER_SIZES,
   PRINT_SIDES,
 } from "@/lib/constants";
@@ -83,6 +84,27 @@ export const orderConfigSchema = z.object({
   pageSelection: z.enum(["ALL", "CUSTOM"]),
   customPages: z.string().max(200).optional(),
   finishing: z.array(finishingEnum).max(3).default([]),
+});
+
+/**
+ * Full create-order payload: print configuration **plus** the documents to print.
+ *
+ * `fileIds` has to travel in the same parsed body as the configuration. The route
+ * used to read it with a second `req.clone().json()` after `parseBody` had already
+ * consumed the stream — cloning a disturbed Request throws `TypeError: unusable`
+ * synchronously, which surfaced as a 500 on every order.
+ *
+ * Ids are checked for UUID shape before they reach Prisma: `UploadedFile.id` is a
+ * `uuid` column, so a malformed string would otherwise be sent to PostgreSQL and
+ * fail with a raw 22P02 cast error instead of a validation response.
+ * Only *shape* is validated here — ownership, completion and page counts are
+ * always re-derived server-side in `createOrder`.
+ */
+export const orderCreateSchema = orderConfigSchema.extend({
+  fileIds: z
+    .array(z.string().uuid("Invalid document reference"))
+    .min(1, "Attach at least one document.")
+    .max(MAX_FILES_PER_ORDER, `You can attach at most ${MAX_FILES_PER_ORDER} documents.`),
 });
 
 export const paymentSubmitSchema = z.object({
