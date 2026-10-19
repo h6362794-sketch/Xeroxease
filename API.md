@@ -28,7 +28,7 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 | Method | Path | Auth | Body/Query | Notes |
 |---|---|---|---|---|
 | GET | `/orders` | STUDENT | `?q=&status=&page=&pageSize=` | Own orders only, paginated. |
-| POST | `/orders` | STUDENT | fileIds[], paperSize, colorMode (required), sides, copies, pageSelection, customPages?, finishing[] | **Server recalculates price** from verified page counts. Transactional. Returns `XE-…` order number. |
+| POST | `/orders` | STUDENT | fileIds[], paperSize, colorMode (required), sides, copies, pageSelection, customPages?, finishing[] | **Server recalculates price** from verified page counts; client-supplied prices/status are ignored. `fileIds` must be 1–10 UUIDs of the caller's **verified** (`COMPLETED`) documents, else `422`/`403`/`409` before anything is written. Transactional. Returns `XE-…` order number. |
 | GET | `/orders/:id` | owner or ADMIN | — | Full detail incl. events, files, feedback. IDOR-guarded. |
 | POST | `/orders/:id/cancel` | owner | reason? | Server checks configured cancellable statuses. Transactional + audited. |
 | POST | `/orders/:id/feedback` | owner | rating 1–5, comment? | Only after `COMPLETED`; one per order. |

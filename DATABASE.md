@@ -88,18 +88,25 @@ Prisma migrations are forward-only. To reverse a change, write and commit a **ne
 
 Connection config uses `DATABASE_URL` (runtime, pooler-friendly) and `DIRECT_URL` (migrations) — see `.env.example`.
 
-**Pooler note (Prisma ≥ 6):** Prisma uses prepared statements.
-Current Supabase poolers (Supavisor / PgBouncer ≥ 1.21 with
-`max_prepared_statements > 0`) pool named prepared statements
-correctly, so the transaction-mode pooler URL (port 6543) works
-**without any extra query parameter**. Only pre-1.21 poolers need
-`?pgbouncer=true`; on a modern pooler that flag is unnecessary and
-can itself cause `prepared statement "PGBOUNCER_…" does not exist`
-(prisma/prisma#21799). Never put `pgbouncer=true` on `DIRECT_URL`:
-migrations use advisory locks and need a direct/session connection.
+**Pooler note (Prisma ≥ 6):** Prisma uses named prepared statements, and
+Supabase's transaction-mode pooler (port 6543) does not preserve them
+between transactions. Supabase documents `?pgbouncer=true` as the
+required Prisma setting on that endpoint; without it you get
+intermittent `prepared statement "…" does not exist` (SQLSTATE 26000) or
+`already exists` (42P05). Never put `pgbouncer=true` on `DIRECT_URL`:
+migrations use advisory locks and need a direct/session connection
+(port 5432), where prepared statements work normally.
+
+Do not add `connection_limit=1`. The app keeps one singleton Prisma
+client, so that parameter leaves it with a single pooled connection and
+turns every concurrent query into a waiter; when a waiter exceeds
+`pool_timeout` (default 10 s) Prisma fails the request with
+`P2024: Timed out fetching a new connection from the connection pool`.
+Leave it unset or use a small value (3–5).
+
 `src/server/db-config.ts` validates both URLs at startup and in
-`npm run config:check`, printing sanitised warnings (never the URL
-or password) when the configuration is ambiguous or unsafe.
+`npm run config:check`, printing sanitised warnings (never the URL or
+password) when the configuration is ambiguous or unsafe.
 
 ## Backups & recovery
 

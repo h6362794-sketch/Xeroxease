@@ -5,23 +5,28 @@
 // never the password, and never the full URL, so results can be logged or
 // shown in a pre-deploy check without leaking credentials.
 //
-// Why this exists: Prisma uses PostgreSQL prepared statements. Behind a
-// transaction-mode pooler (Supabase Supavisor on port 6543) those statements
-// can be routed to a different backend connection than the one they were
-// prepared on, which surfaces as `prepared statement "..." does not exist`
-// (SQLSTATE 26000). The fix depends on the pooler, so the configuration must
-// be *diagnosed*, not blindly rewritten:
+// Why this exists: Prisma uses named PostgreSQL prepared statements. A
+// transaction-mode pooler hands each transaction a different backend
+// connection, so a statement prepared on one backend is not visible on the
+// next, which surfaces as `prepared statement "..." does not exist` /
+// `already exists` (SQLSTATE 26000 / 42P05). The right setting depends on the
+// pooler, so the configuration must be *diagnosed*, not blindly rewritten:
 //
-//   * PgBouncer / Supavisor < 1.21 (no max_prepared_statements support):
-//     the pooled URL needs ?pgbouncer=true, which makes Prisma skip named
-//     prepared statements.
-//   * PgBouncer >= 1.21 / current Supavisor with max_prepared_statements > 0:
-//     named statements are pooled correctly, and setting pgbouncer=true is
-//     not only unnecessary but can itself cause
-//     `prepared statement "PGBOUNCER_..." does not exist` (prisma/prisma#21799).
+//   * Supabase shared pooler, transaction mode (port 6543): Supavisor does not
+//     support prepared statements in this mode, so Prisma needs
+//     ?pgbouncer=true, which makes it skip them. This is the documented
+//     setting for Supabase + Prisma and must be kept on that endpoint.
+//   * PgBouncer >= 1.21 with max_prepared_statements > 0: the pooler can track
+//     named statements itself, so ?pgbouncer=true merely disables a feature
+//     that would work.
+//   * Direct / session connections (port 5432): prepared statements work;
+//     ?pgbouncer=true only turns them off.
 //
-// The runtime URL is therefore left exactly as the operator wrote it; these
-// helpers only validate it and explain the trade-offs.
+// The pooler implementation and version cannot be inferred from a URL, so the
+// rules below are deliberately conservative: on the transaction-mode port the
+// flag is expected (and its absence is warned about), and on any other port
+// its presence is warned about. The URL is never rewritten here; these helpers
+// only validate it and explain the trade-offs.
 
 export interface DatabaseUrlInfo {
   /** Normalised scheme, e.g. "postgresql". */
@@ -145,30 +150,39 @@ export function diagnoseDatabaseConfig(input: DatabaseConfigInput): DatabaseConf
   }
 
   // Transaction-mode pooler detection (Supabase Supavisor uses 6543).
+  //
+  // Do NOT warn about pgbouncer=true here. On this endpoint it is the
+  // documented, required Prisma setting: Supavisor in transaction mode does not
+  // support prepared statements, and Prisma prepares every query by default.
+  // Suggesting its removal is what produces intermittent 26000/42P05 errors.
   if (info.port === POOLER_TRANSACTION_PORT) {
-    if (info.pgbouncer) {
-      warnings.push(
-        "DATABASE_URL uses the transaction-mode pooler (port 6543) with pgbouncer=true. " +
-          "That flag is only needed for poolers without named-prepared-statement support " +
-          "(PgBouncer < 1.21). On PgBouncer >= 1.21 / current Supavisor it is unnecessary and can itself " +
-          'produce `prepared statement "PGBOUNCER_..." does not exist` errors — remove it there.'
-      );
-    } else {
+    if (!info.pgbouncer) {
       warnings.push(
         "DATABASE_URL uses the transaction-mode pooler (port 6543) without pgbouncer=true. " +
-          "Prisma uses prepared statements, which need pooler support (PgBouncer >= 1.21 with " +
-          "max_prepared_statements > 0, as on current Supabase). If you see `prepared statement " +
-          '"..." does not exist` (SQLSTATE 26000), either add ?pgbouncer=true (older poolers only) ' +
-          "or switch DATABASE_URL to the session pooler / direct connection (port 5432)."
+          "Transaction pooling does not preserve session state, so Prisma's named prepared " +
+          "statements cannot be reused across transactions and queries fail with `prepared " +
+          'statement "..." does not exist` (SQLSTATE 26000) or `already exists` (SQLSTATE 42P05). ' +
+          "Append ?pgbouncer=true — the documented Prisma setting for Supabase transaction mode — " +
+          "or point DATABASE_URL at the session pooler / direct connection (port 5432)."
       );
     }
+  } else if (info.pgbouncer) {
+    warnings.push(
+      "DATABASE_URL sets pgbouncer=true but is not on the transaction-mode pooler port (6543). " +
+        "The flag disables Prisma's named prepared statements; it is only needed behind a " +
+        "transaction-mode pooler. On a direct or session connection (port 5432) it needlessly " +
+        "slows queries down — remove it there."
+    );
   }
 
   if (info.connectionLimit === 1) {
     warnings.push(
-      "DATABASE_URL sets connection_limit=1. That serialises every query through this process's " +
-        "singleton Prisma client; it only makes sense for per-request serverless clients. Raise it " +
-        "(or drop it) unless a platform constraint requires 1."
+      "DATABASE_URL sets connection_limit=1. A singleton Prisma client then owns exactly one " +
+        "pooled connection, so every concurrent query in a request queues behind it; a waiter that " +
+        "is not served within pool_timeout (default 10 s) fails with P2024 `Timed out fetching a " +
+        "new connection from the connection pool`. Routes that fire many queries at once (e.g. the " +
+        "admin analytics dashboard) are the first to hit this. Raise it (3–5 is a common serverless " +
+        "value) or drop it, unless the platform genuinely requires 1."
     );
   }
 
