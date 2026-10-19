@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/server/auth";
-import { apiError, enforceRateLimit, json, parseBody, withErrorHandling } from "@/server/api-utils";
+import { apiError, enforceRateLimit, json, parseJsonBody, withErrorHandling } from "@/server/api-utils";
 import { RATE_LIMITS } from "@/server/rate-limit";
 import { orderConfigSchema } from "@/server/validation";
 import { createOrder } from "@/server/orders";
@@ -60,17 +60,24 @@ export async function POST(req: Request) {
     const limited = await enforceRateLimit(req, RATE_LIMITS.orderCreate, "order-create");
     if (limited) return limited;
 
-    const data = await parseBody(req, orderConfigSchema);
-    const fileIds = (await req
-      .clone()
-      .json()
-      .then((b: { fileIds?: unknown }) => (Array.isArray(b?.fileIds) ? b.fileIds : []))
-      .catch(() => [])) as string[];
-    if (!fileIds.length) return apiError("Attach at least one document.", 400);
+    // Parse the body exactly once. `orderConfigSchema` deliberately ignores the
+    // raw `fileIds` field, so both the validated config and the file references
+    // are derived from the same parsed value. The previous implementation
+    // re-read the body via `req.clone().json()` *after* `parseBody` had already
+    // consumed it: undici throws a synchronous `TypeError: unusable` when
+    // cloning a request whose body is disturbed, and because the throw was
+    // synchronous the trailing `.catch(() => [])` never attached — every order
+    // submission died as a 500 before reaching `createOrder`.
+    const raw = await parseJsonBody(req);
+    const data = orderConfigSchema.parse(raw);
+    const rawFileIds = (raw as { fileIds?: unknown } | null)?.fileIds;
+    const candidates = Array.isArray(rawFileIds) ? rawFileIds : [];
+    if (!candidates.length) return apiError("Attach at least one document.", 400);
+    const fileIds = candidates.filter((f): f is string => typeof f === "string").slice(0, 10);
 
     const order = await createOrder({
       userId: user.id,
-      fileIds: fileIds.filter((f): f is string => typeof f === "string").slice(0, 10),
+      fileIds,
       paperSize: data.paperSize,
       colorMode: data.colorMode,
       sides: data.sides,

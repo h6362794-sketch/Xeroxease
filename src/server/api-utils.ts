@@ -110,12 +110,24 @@ export async function enforceRateLimit(
   return null;
 }
 
-export async function parseBody<T>(req: Request, schema: ZodSchema<T>): Promise<T> {
-  let body: unknown;
+/**
+ * Read and JSON-parse a request body **exactly once**.
+ *
+ * A `Request` body is a one-shot stream: after `req.json()` the body is
+ * disturbed and any further read — including `req.clone()`, which undici
+ * refuses with a synchronous `TypeError: unusable` — fails. Handlers that need
+ * both a validated subset and extra raw fields (`fileIds`, …) must read the
+ * body once through this helper and derive everything else from that single
+ * parsed value.
+ */
+export async function parseJsonBody(req: Request): Promise<unknown> {
   try {
-    body = await req.json();
+    return await req.json();
   } catch {
     throw Object.assign(new Error("Invalid JSON body"), { status: 400 });
   }
-  return schema.parse(body);
+}
+
+export async function parseBody<T>(req: Request, schema: ZodSchema<T>): Promise<T> {
+  return schema.parse(await parseJsonBody(req));
 }
