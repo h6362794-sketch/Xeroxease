@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSessionUser, isAdminRole } from "@/server/auth";
 import { apiError, json, withErrorHandling } from "@/server/api-utils";
+import { runWithDbConcurrency } from "@/server/db-concurrency";
 
 export async function GET() {
   return withErrorHandling(async () => {
@@ -12,6 +13,10 @@ export async function GET() {
     const startOfWeek = new Date(startOfDay.getTime() - 6 * 86_400_000);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
+    // Fifteen read queries per request, re-requested by the dashboard every 30 s.
+    // They are submitted through `runWithDbConcurrency` so a small pool (the
+    // production URL sets connection_limit=1) is never handed fifteen waiters at
+    // once — a waiter that misses pool_timeout fails the whole request with P2024.
     const [
       totalOrders,
       newOrders,
@@ -28,26 +33,46 @@ export async function GET() {
       recentFeedback,
       statusGroups,
       colourSplit,
-    ] = await Promise.all([
-      prisma.order.count(),
-      prisma.order.count({ where: { createdAt: { gte: startOfDay } } }),
-      prisma.order.count({ where: { status: { in: ["PROCESSING", "DOCUMENTS_RECEIVED", "PAYMENT_CONFIRMED"] } } }),
-      prisma.order.count({ where: { status: "PRINTING" } }),
-      prisma.order.count({ where: { status: "READY_FOR_COLLECTION" } }),
-      prisma.order.count({ where: { status: "COMPLETED" } }),
-      prisma.order.count({ where: { status: "CANCELLED" } }),
-      prisma.order.count({ where: { paymentStatus: "PAYMENT_PENDING" } }),
-      prisma.order.count({ where: { paymentStatus: { in: ["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"] } } }),
-      prisma.order.aggregate({ _sum: { totalAmount: true }, where: { paymentStatus: "PAYMENT_CONFIRMED" } }),
-      prisma.order.aggregate({ _sum: { billablePages: true }, where: { createdAt: { gte: startOfDay } } }),
-      prisma.feedback.aggregate({ _avg: { rating: true }, _count: true }),
-      prisma.feedback.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        include: { order: { select: { orderNumber: true } } },
-      }),
-      prisma.order.groupBy({ by: ["status"], _count: true }),
-      prisma.order.groupBy({ by: ["colorMode"], _count: true, where: { status: { not: "CANCELLED" } } }),
+    ] = await runWithDbConcurrency([
+      () => prisma.order.count(),
+      () => prisma.order.count({ where: { createdAt: { gte: startOfDay } } }),
+      () =>
+        prisma.order.count({
+          where: { status: { in: ["PROCESSING", "DOCUMENTS_RECEIVED", "PAYMENT_CONFIRMED"] } },
+        }),
+      () => prisma.order.count({ where: { status: "PRINTING" } }),
+      () => prisma.order.count({ where: { status: "READY_FOR_COLLECTION" } }),
+      () => prisma.order.count({ where: { status: "COMPLETED" } }),
+      () => prisma.order.count({ where: { status: "CANCELLED" } }),
+      () => prisma.order.count({ where: { paymentStatus: "PAYMENT_PENDING" } }),
+      () =>
+        prisma.order.count({
+          where: { paymentStatus: { in: ["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"] } },
+        }),
+      () =>
+        prisma.order.aggregate({
+          _sum: { totalAmount: true },
+          where: { paymentStatus: "PAYMENT_CONFIRMED" },
+        }),
+      () =>
+        prisma.order.aggregate({
+          _sum: { billablePages: true },
+          where: { createdAt: { gte: startOfDay } },
+        }),
+      () => prisma.feedback.aggregate({ _avg: { rating: true }, _count: true }),
+      () =>
+        prisma.feedback.findMany({
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          include: { order: { select: { orderNumber: true } } },
+        }),
+      () => prisma.order.groupBy({ by: ["status"], _count: true }),
+      () =>
+        prisma.order.groupBy({
+          by: ["colorMode"],
+          _count: true,
+          where: { status: { not: "CANCELLED" } },
+        }),
     ]);
 
     return json({

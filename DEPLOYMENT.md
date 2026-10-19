@@ -2,7 +2,7 @@
 
 ## Option A — Vercel (recommended for the app) + Supabase
 
-1. **Database**: create the Supabase project (SETUP.md §2–3). Use the **pooler** URL (port 6543) as `DATABASE_URL` and the direct URL (5432) as `DIRECT_URL`. Do **not** add `?pgbouncer=true` or `connection_limit=1` — current Supabase poolers support Prisma's prepared statements natively, and those flags are only needed on pre-1.21 PgBouncer (see SETUP.md §3). `npm run config:check` prints sanitised diagnostics if the configuration is ambiguous.
+1. **Database**: create the Supabase project (SETUP.md §2–3). Use the **transaction-mode pooler** URL (port 6543, with `?pgbouncer=true` — transaction pooling cannot carry Prisma's prepared statements) as `DATABASE_URL`, and the direct URL (5432) as `DIRECT_URL`. Do **not** add `connection_limit=1`: with the singleton Prisma client it leaves one pooled connection and makes concurrent queries time out with `P2024` (see SETUP.md §3). `npm run config:check` prints sanitised diagnostics if the configuration is ambiguous.
 2. **Push code** to GitHub and import the repo in Vercel.
 3. **Environment variables** (Project → Settings → Environment Variables): everything from `.env.example`, with production values:
    - `SESSION_SECRET` — a fresh 32+ byte random string (never reuse dev)

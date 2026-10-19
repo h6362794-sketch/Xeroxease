@@ -131,14 +131,26 @@ describe("diagnoseDatabaseConfig", () => {
     expect(warn).toContain("SQLSTATE 26000");
   });
 
-  it("warns that pgbouncer=true is unnecessary (and harmful) on modern poolers", () => {
+  it("accepts pgbouncer=true on the transaction-mode pooler", () => {
+    // Supavisor transaction mode does not support prepared statements, so this is
+    // the documented Prisma + Supabase combination — warning about it would push
+    // operators into intermittent 26000/42P05 errors.
     const d = diagnoseDatabaseConfig({
       databaseUrl: `${POOLED}?pgbouncer=true`,
       directUrl: DIRECT,
     });
+    expect(d.errors).toEqual([]);
+    expect(d.warnings.filter((w) => w.includes("pgbouncer"))).toEqual([]);
+  });
+
+  it("warns when pgbouncer=true is set outside the transaction-mode pooler", () => {
+    const d = diagnoseDatabaseConfig({
+      databaseUrl: `${DIRECT}?pgbouncer=true`,
+      directUrl: DIRECT,
+    });
     const warn = d.warnings.join("\n");
-    expect(warn).toContain("PGBOUNCER_");
-    expect(warn).toContain("remove it");
+    expect(warn).toContain("pgbouncer=true");
+    expect(warn).toContain("6543");
   });
 
   it("warns that connection_limit=1 serialises the singleton client", () => {
@@ -146,7 +158,10 @@ describe("diagnoseDatabaseConfig", () => {
       databaseUrl: `${DIRECT}?connection_limit=1`,
       directUrl: DIRECT,
     });
-    expect(d.warnings.some((w) => w.includes("connection_limit=1"))).toBe(true);
+    const warn = d.warnings.join("\n");
+    expect(warn).toContain("connection_limit=1");
+    // The warning names the failure mode operators actually see in the logs.
+    expect(warn).toContain("P2024");
   });
 
   it("warns when DIRECT_URL is missing", () => {
