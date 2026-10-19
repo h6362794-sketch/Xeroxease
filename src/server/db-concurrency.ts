@@ -29,10 +29,12 @@ export const DB_QUERY_CONCURRENCY = 4;
  * the moment it is created, so accepting promises here would not bound anything.
  * Results keep their tuple positions, so destructuring is fully typed.
  */
-export async function runWithDbConcurrency<T extends readonly (() => Promise<unknown>)[]>(
-  tasks: T,
-  limit: number = DB_QUERY_CONCURRENCY
-): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
+export async function runWithDbConcurrency<
+  // `const` forces the array literal to be inferred as a tuple instead of a
+  // homogeneous array, so each result keeps the type of its own query. Without
+  // it every destructured variable becomes the union of all query results.
+  const T extends readonly (() => Promise<unknown>)[],
+>(tasks: T, limit: number = DB_QUERY_CONCURRENCY): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
   // `-readonly` matters: `T` is usually inferred from a `readonly` tuple literal,
   // and a readonly mapped type cannot be written to.
   type Results = { -readonly [K in keyof T]: Awaited<ReturnType<T[K]>> };

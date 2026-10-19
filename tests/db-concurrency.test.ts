@@ -20,6 +20,19 @@ describe("runWithDbConcurrency", () => {
     expect(results).toEqual(["first", "second", "third"]);
   });
 
+  it("keeps each result's own type (compile-time guard)", async () => {
+    // If the helper stops inferring a tuple, `typed` collapses to an array of the
+    // union `number | string` and the two annotated assignments below fail the CI
+    // typecheck (`npm run typecheck`) — which is how this regression is caught,
+    // since the runtime values are perfectly fine either way.
+    const typed = await runWithDbConcurrency([async () => 1, async () => "two"]);
+    const first: number = typed[0];
+    const second: string = typed[1];
+
+    expect(first).toBe(1);
+    expect(second).toBe("two");
+  });
+
   it("never starts more tasks than the limit", async () => {
     let inFlight = 0;
     let peak = 0;
