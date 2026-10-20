@@ -272,7 +272,9 @@ describe("POST /api/orders — happy path", () => {
 
     const body = await json(res);
     expect(body.order).toMatchObject({
-      status: "PAYMENT_PENDING",
+      // A new order enters the lifecycle at "Order Received"; payment remains a
+      // separate axis and starts pending.
+      status: "ORDER_RECEIVED",
       paymentStatus: "PAYMENT_PENDING",
       // 10 verified pages × ₹2 (server price table), copies = 1.
       totalAmount: 20,

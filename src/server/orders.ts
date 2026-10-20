@@ -1,11 +1,18 @@
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { calculatePrice, computeSheets } from "./pricing";
+import { calculatePrice } from "./pricing";
 import { parsePageSelection } from "./page-selection";
-import { CANCELLABLE_STATUSES } from "@/lib/constants";
-import { canActorChangeStatus, isTransitionAllowed } from "@/lib/order-status";
+import {
+  allowedNextStatuses,
+  canActorChangeStatus,
+  isStudentCancellable,
+  isTransitionAllowed,
+  requiresConfirmation,
+  requiresReason,
+  statusLabel,
+} from "@/lib/order-status";
 
-export { canActorChangeStatus, isTransitionAllowed };
+export { canActorChangeStatus, isTransitionAllowed, allowedNextStatuses };
 import { audit } from "./audit";
 import { notify, NOTIFY } from "./notifications";
 
@@ -27,10 +34,6 @@ export class OrderError extends Error {
     super(message);
     this.status = status;
   }
-}
-
-function label(status: string): string {
-  return status.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** Aggregate server-verified page counts from order files. */
@@ -161,7 +164,7 @@ export async function createOrder(input: CreateOrderInput) {
     table
   );
 
-  const order = await createOrderRow({ input, files, totalPages, price });
+  const order = await createOrderRow({ input, files, totalPages, price, table });
 
   await NOTIFY.orderCreated(input.userId, order.orderNumber, order.id);
   await audit({
@@ -192,10 +195,35 @@ async function createOrderRow(params: {
   input: CreateOrderInput;
   files: OrderableFile[];
   totalPages: number;
-  price: { billablePages: number; pricePerPage: number; finishingFee: number; total: number };
+  price: { billablePages: number; pricePerPage: number; finishingFee: number; total: number; printCost: number };
+  table: Record<string, number>;
 }) {
-  const { input, files, totalPages, price } = params;
+  const { input, files, totalPages, price, table } = params;
   let lastErr: unknown;
+
+  // Immutable snapshot of the price list and the exact calculation. A later
+  // price-list edit must never alter this order's agreed amount.
+  const pricingSnapshot = {
+    version: 1,
+    currency: "INR",
+    capturedAt: new Date().toISOString(),
+    priceTable: { ...table },
+    applied: {
+      paperSize: input.paperSize,
+      colorMode: input.colorMode,
+      sides: input.sides,
+      copies: input.copies,
+      pageSelection: input.pageSelection,
+      customPages: input.pageSelection === "CUSTOM" ? input.customPages ?? null : null,
+      totalPages,
+      billablePages: price.billablePages,
+      pricePerPage: price.pricePerPage,
+      printCost: price.printCost,
+      finishing: [...input.finishing],
+      finishingFee: price.finishingFee,
+      total: price.total,
+    },
+  };
 
   for (let attempt = 0; attempt < ORDER_NUMBER_ATTEMPTS; attempt++) {
     try {
@@ -216,7 +244,9 @@ async function createOrderRow(params: {
             pricePerPage: price.pricePerPage,
             finishingFee: price.finishingFee,
             totalAmount: price.total,
-            status: "PAYMENT_PENDING",
+            finishingOptions: input.finishing,
+            pricingSnapshot,
+            status: "ORDER_RECEIVED",
             paymentStatus: "PAYMENT_PENDING",
             files: { connect: files.map((f) => ({ id: f.id })) },
           },
@@ -224,9 +254,9 @@ async function createOrderRow(params: {
         await tx.orderEvent.create({
           data: {
             orderId: o.id,
-            type: "ORDER_PLACED",
-            toStatus: "PAYMENT_PENDING",
-            message: `Order created with ${files.length} document(s), ${totalPages} page(s).`,
+            type: "ORDER_RECEIVED",
+            toStatus: "ORDER_RECEIVED",
+            message: `Order received with ${files.length} document(s), ${totalPages} page(s). Payment options unlock once the print desk accepts it.`,
             actorId: input.userId,
             actorRole: "STUDENT",
           },
@@ -283,65 +313,126 @@ export async function nextOrderNumber(tx: OrderNumberClient = prisma): Promise<s
 }
 
 
+/**
+ * Apply an administrator status transition.
+ *
+ * Everything is validated here, server-side, from the authoritative transition
+ * table: role, known target, legal edge, required reason for rejection and an
+ * explicit confirmation for delivery. The write is a *conditional* `updateMany`
+ * on the status that was read, so a concurrent cancellation/acceptance cannot be
+ * overwritten (the loser gets a 409 and no event is written).
+ */
 export async function adminUpdateOrderStatus(params: {
   orderId: string;
   toStatus: string;
   actorId: string;
   actorRole: string;
   note?: string;
-}): Promise<void> {
+  /** Must be true for irreversible outcomes (DELIVERED / REJECTED). */
+  confirm?: boolean;
+}): Promise<{ fromStatus: string; toStatus: string }> {
   const order = await prisma.order.findUnique({ where: { id: params.orderId } });
   if (!order) throw new OrderError("Order not found", 404);
   if (!canActorChangeStatus(params.actorRole)) {
     throw new OrderError("Not permitted", 403);
   }
-  if (order.status === params.toStatus) return; // idempotent
+  if (order.status === params.toStatus) {
+    // Repeated transitions are refused rather than silently reported as success:
+    // that previously produced a second "completed" notification and hid a stale UI.
+    throw new OrderError(`This order is already ${statusLabel(order.status)}.`, 409);
+  }
   if (!isTransitionAllowed(order.status, params.toStatus)) {
-    throw new OrderError(`Cannot move order from ${order.status} to ${params.toStatus}.`, 409);
+    throw new OrderError(
+      `Cannot move an order from ${statusLabel(order.status)} to ${statusLabel(params.toStatus)}.`,
+      409
+    );
+  }
+  if (requiresConfirmation(params.toStatus) && params.confirm !== true) {
+    throw new OrderError(
+      params.toStatus === "DELIVERED"
+        ? "Please confirm that the documents were handed to the student before marking the order delivered."
+        : "Please confirm that you want to reject this order.",
+      422
+    );
+  }
+  const note = params.note?.trim() ?? "";
+  if (requiresReason(params.toStatus) && note.length < 3) {
+    throw new OrderError("A reason is required when rejecting an order.", 422);
   }
 
   const patch: Record<string, unknown> = { status: params.toStatus };
   const now = new Date();
+  if (params.toStatus === "ACCEPTED") {
+    patch.acceptedAt = now;
+    patch.acceptedBy = params.actorId;
+  }
+  if (params.toStatus === "DELIVERED") {
+    patch.deliveredAt = now;
+    // `completedAt` remains for legacy reports/analytics that already read it.
+    patch.completedAt = now;
+  }
   if (params.toStatus === "COMPLETED") patch.completedAt = now;
+  if (params.toStatus === "REJECTED") {
+    patch.rejectedAt = now;
+    patch.rejectedBy = params.actorId;
+    patch.rejectionReason = note;
+  }
   if (params.toStatus === "CANCELLED") {
     patch.cancelledAt = now;
     patch.cancelledBy = params.actorId;
-    patch.cancelReason = params.note ?? null;
+    patch.cancelReason = note || null;
   }
-  if (params.toStatus === "READY_FOR_COLLECTION") {
+  if (params.toStatus === "READY_FOR_PICKUP" || params.toStatus === "READY_FOR_COLLECTION") {
     // Attach the collection token inside the same transaction as the status change:
     // a partially applied update used to leave a live collection code on an order
-    // that never actually reached READY_FOR_COLLECTION.
+    // that never actually reached the ready state.
     const { signCollectionToken, hashCollectionToken } = await import("./collection");
     const token = signCollectionToken(order.id);
     patch.collectionTokenHash = hashCollectionToken(token);
     patch.collectionTokenUsedAt = null;
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.order.update({ where: { id: order.id }, data: patch as never });
+  const applied = await prisma.$transaction(async (tx) => {
+    const updated = await tx.order.updateMany({
+      where: { id: order.id, status: order.status as never },
+      data: patch as never,
+    });
+    if (updated.count !== 1) return false;
+
     await tx.orderEvent.create({
       data: {
         orderId: order.id,
         type: "STATUS_CHANGE",
         fromStatus: order.status,
         toStatus: params.toStatus,
-        message: params.note,
+        message: note || null,
         actorId: params.actorId,
         actorRole: params.actorRole,
       },
     });
+    return true;
   });
 
-  // Notifications
-  if (params.toStatus === "READY_FOR_COLLECTION") {
+  if (!applied) {
+    throw new OrderError(
+      "This order was updated by someone else at the same time. Refresh the page and try again.",
+      409
+    );
+  }
+
+  // Notifications (in-app only; no external messaging service)
+  if (params.toStatus === "READY_FOR_PICKUP" || params.toStatus === "READY_FOR_COLLECTION") {
     await NOTIFY.orderReady(order.userId, order.orderNumber, order.id);
-  } else if (params.toStatus === "COMPLETED") {
+  } else if (params.toStatus === "DELIVERED" || params.toStatus === "COMPLETED") {
     await NOTIFY.orderCompleted(order.userId, order.orderNumber, order.id);
   } else if (params.toStatus === "CANCELLED") {
     await NOTIFY.orderCancelled(order.userId, order.orderNumber, order.id);
+  } else if (params.toStatus === "REJECTED") {
+    await NOTIFY.orderRejected(order.userId, order.orderNumber, note, order.id);
+  } else if (params.toStatus === "ACCEPTED") {
+    await NOTIFY.orderAccepted(order.userId, order.orderNumber, order.id);
   } else {
-    await NOTIFY.statusUpdate(order.userId, order.orderNumber, label(params.toStatus), order.id);
+    await NOTIFY.statusUpdate(order.userId, order.orderNumber, statusLabel(params.toStatus), order.id);
   }
 
   await audit({
@@ -350,10 +441,20 @@ export async function adminUpdateOrderStatus(params: {
     action: "ORDER_STATUS_CHANGE",
     targetType: "ORDER",
     targetId: order.id,
-    metadata: { from: order.status, to: params.toStatus, orderNumber: order.orderNumber },
+    metadata: { from: order.status, to: params.toStatus, orderNumber: order.orderNumber, note },
   });
+
+  return { fromStatus: order.status, toStatus: params.toStatus };
 }
 
+/**
+ * Student cancellation.
+ *
+ * Eligible only before acceptance. The conditional update re-checks the status
+ * in the same statement that writes CANCELLED, so a simultaneous acceptance
+ * cannot be raced into an inconsistent "accepted + cancelled" order: whichever
+ * request loses sees zero updated rows and receives a 409.
+ */
 export async function cancelOrder(params: {
   orderId: string;
   userId: string;
@@ -367,35 +468,48 @@ export async function cancelOrder(params: {
 
   const { getSettings } = await import("./settings");
   const settings = await getSettings();
-  const eligible = settings.cancellationAllowedStatuses.includes(order.status);
-  const eligibleEnum = CANCELLABLE_STATUSES as readonly string[];
-  const allowed = eligible || eligibleEnum.includes(order.status);
-  if (!allowed) {
-    throw new OrderError("This order can no longer be cancelled.", 409);
+  if (!isStudentCancellable(order.status, settings.cancellationAllowedStatuses)) {
+    throw new OrderError(
+      order.status === "ORDER_RECEIVED"
+        ? "This order can no longer be cancelled."
+        : "This order has been accepted and can no longer be cancelled online.",
+      409
+    );
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.order.update({
-      where: { id: order.id },
+  const reason = params.reason?.trim() || null;
+  const applied = await prisma.$transaction(async (tx) => {
+    const updated = await tx.order.updateMany({
+      where: { id: order.id, userId: params.userId, status: order.status as never },
       data: {
         status: "CANCELLED",
         cancelledAt: new Date(),
         cancelledBy: params.userId,
-        cancelReason: params.reason ?? null,
-      },
+        cancelReason: reason,
+      } as never,
     });
+    if (updated.count !== 1) return false;
+
     await tx.orderEvent.create({
       data: {
         orderId: order.id,
         type: "CANCELLED",
         fromStatus: order.status,
         toStatus: "CANCELLED",
-        message: params.reason,
+        message: reason,
         actorId: params.userId,
         actorRole: params.actorRole,
       },
     });
+    return true;
   });
+
+  if (!applied) {
+    throw new OrderError(
+      "This order has been accepted and can no longer be cancelled online. Refresh the page for its latest status.",
+      409
+    );
+  }
 
   await NOTIFY.orderCancelled(order.userId, order.orderNumber, order.id);
   await audit({
@@ -404,6 +518,6 @@ export async function cancelOrder(params: {
     action: "ORDER_CANCELLED",
     targetType: "ORDER",
     targetId: order.id,
-    metadata: { orderNumber: order.orderNumber, reason: params.reason },
+    metadata: { orderNumber: order.orderNumber, reason },
   });
 }

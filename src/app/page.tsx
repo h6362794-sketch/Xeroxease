@@ -3,6 +3,7 @@ import { SiteNav } from "@/components/site-nav";
 import { SiteFooter } from "@/components/site-footer";
 import { IntroGate } from "@/components/intro-gate";
 import { HeroStagger, HeroItem, Reveal } from "@/features/landing/landing-interactive";
+import { PricingSection } from "@/features/landing/pricing-section";
 import {
   UploadCloud,
   ScanSearch,
@@ -224,40 +225,6 @@ function Security() {
           </div>
         </div>
       </div>
-    </section>
-  );
-}
-
-const PRICING_ROWS = [
-  { label: "A4 Black & White", price: "₹2", unit: "/page" },
-  { label: "A4 Colour", price: "₹8", unit: "/page" },
-  { label: "Legal Black & White", price: "₹3", unit: "/page" },
-  { label: "Legal Colour", price: "₹10", unit: "/page" },
-  { label: "Staple", price: "₹5", unit: "" },
-  { label: "Spiral Binding", price: "₹40", unit: "" },
-  { label: "Stick File", price: "₹25", unit: "" },
-];
-
-function PricingSection() {
-  return (
-    <section id="pricing-section" className="mx-auto max-w-6xl px-4 sm:px-6 py-24">
-      <div className="max-w-2xl mb-14">
-        <p className="text-xs uppercase tracking-[0.25em] text-[#b49aff] font-semibold mb-3">Pricing</p>
-        <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">Student-friendly rates.</h2>
-      </div>
-      <Reveal>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {PRICING_ROWS.map((p, i) => (
-            <div key={p.label} className={`card p-5 ${i === 0 ? "glow-ring" : ""}`}>
-              <p className="text-sm text-zinc-400">{p.label}</p>
-              <p className="mt-2 text-2xl font-extrabold text-white">
-                {p.price}
-                <span className="text-sm text-zinc-500 font-medium">{p.unit}</span>
-              </p>
-            </div>
-          ))}
-        </div>
-      </Reveal>
     </section>
   );
 }

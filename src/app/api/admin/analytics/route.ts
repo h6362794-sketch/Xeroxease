@@ -38,12 +38,12 @@ export async function GET() {
       () => prisma.order.count({ where: { createdAt: { gte: startOfDay } } }),
       () =>
         prisma.order.count({
-          where: { status: { in: ["PROCESSING", "DOCUMENTS_RECEIVED", "PAYMENT_CONFIRMED"] } },
+          where: { status: { in: ["ORDER_RECEIVED", "ACCEPTED", "PROCESSING", "DOCUMENTS_RECEIVED", "PAYMENT_CONFIRMED"] } },
         }),
       () => prisma.order.count({ where: { status: "PRINTING" } }),
-      () => prisma.order.count({ where: { status: "READY_FOR_COLLECTION" } }),
-      () => prisma.order.count({ where: { status: "COMPLETED" } }),
-      () => prisma.order.count({ where: { status: "CANCELLED" } }),
+      () => prisma.order.count({ where: { status: { in: ["READY_FOR_PICKUP", "READY_FOR_COLLECTION"] } } }),
+      () => prisma.order.count({ where: { status: { in: ["DELIVERED", "COMPLETED"] } } }),
+      () => prisma.order.count({ where: { status: { in: ["CANCELLED", "REJECTED"] } } }),
       () => prisma.order.count({ where: { paymentStatus: "PAYMENT_PENDING" } }),
       () =>
         prisma.order.count({

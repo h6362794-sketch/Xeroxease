@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   UploadCloud, FileText, X, CheckCircle2, AlertTriangle, Loader2,
-  ScanSearch, ArrowLeft, ArrowRight, Copy, Check,
+  ScanSearch, ArrowLeft, ArrowRight, Check,
 } from "lucide-react";
 import { Button, Card, Input, Label, Select, FieldError } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -34,7 +34,7 @@ interface FileItem {
   source?: string | null;
 }
 
-const STEPS = ["Upload", "Analyze", "Configure", "Finish", "Review", "Pay", "Done"];
+const STEPS = ["Upload", "Analyze", "Configure", "Finish", "Review", "Done"];
 
 export function OrderWizard({ userId }: { userId: string }) {
   const router = useRouter();
@@ -68,8 +68,6 @@ export function OrderWizard({ userId }: { userId: string }) {
   const [estimate, setEstimate] = useState<{ total: number; billablePages: number; pricePerPage: number; finishingFee: number } | null>(null);
   const [placing, setPlacing] = useState(false);
   const [order, setOrder] = useState<{ id: string; orderNumber: string; totalAmount: number } | null>(null);
-  const [reference, setReference] = useState("");
-  const [payState, setPayState] = useState<"WAITING" | "SUBMITTED">("WAITING");
   const [error, setError] = useState<string | null>(null);
   const [pageCountDraft, setPageCountDraft] = useState<Record<string, string>>({});
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -321,23 +319,9 @@ export function OrderWizard({ userId }: { userId: string }) {
     }
   };
 
-  const submitReference = async () => {
-    setError(null);
-    try {
-      await api(`/api/payment/submit/${order!.id}`, {
-        method: "POST",
-        json: { reference },
-      });
-      setPayState("SUBMITTED");
-      setStep(6);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not submit payment reference.");
-    }
-  };
-
   const removeFile = (id: string) => setFiles((prev) => prev.filter((f) => f.id !== id));
 
-  const next = () => setStep((s) => Math.min(6, s + 1));
+  const next = () => setStep((s) => Math.min(5, s + 1));
   const back = () => setStep((s) => Math.max(0, s - 1));
 
   const toggleFinishing = (opt: string) =>
@@ -674,20 +658,16 @@ export function OrderWizard({ userId }: { userId: string }) {
             </div>
           )}
 
-          {/* STEP 5: PAY */}
-          {step === 5 && order && <PayStep order={order} reference={reference} setReference={setReference} onSubmit={submitReference} onDone={() => { setPayState("SUBMITTED"); setStep(6); }} error={error} />}
-
-          {/* STEP 6: DONE */}
-          {step === 6 && order && (
+          {/* STEP 5: DONE — payment now happens after admin acceptance, from the order page. */}
+          {step === 5 && order && (
             <div className="text-center space-y-5 py-8">
               <motion.div initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", damping: 14 }}>
                 <CheckCircle2 className="h-16 w-16 text-emerald-400 mx-auto" />
               </motion.div>
-              <h1 className="text-xl font-extrabold text-white">Order placed!</h1>
-              <p className="text-sm text-zinc-400">
-                {payState === "SUBMITTED"
-                  ? "Your payment reference is under review. You'll be notified once the desk confirms it."
-                  : "Complete the payment from your order page when you're ready."}
+              <h1 className="text-xl font-extrabold text-white">Order received!</h1>
+              <p className="text-sm text-zinc-400 max-w-sm mx-auto">
+                The print desk will review your order. Once it is accepted, payment options
+                (Cash at Pickup or UPI) appear on your order page. Nothing is charged now.
               </p>
               <div className="flex justify-center gap-3">
                 <Button variant="ghost" onClick={() => router.push("/dashboard")}>Dashboard</Button>
@@ -706,80 +686,6 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between gap-4 text-sm">
       <span className="text-zinc-500">{label}</span>
       <span className="text-white font-medium text-right">{value}</span>
-    </div>
-  );
-}
-
-function PayStep({
-  order, reference, setReference, onSubmit, onDone, error,
-}: {
-  order: { id: string; orderNumber: string; totalAmount: number };
-  reference: string;
-  setReference: (v: string) => void;
-  onSubmit: () => void;
-  onDone: () => void;
-  error: string | null;
-}) {
-  const [qr, setQr] = useState<{ enabled: boolean; qrUrl?: string; instructions: string; accountDisplay: string } | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    api<{ enabled: boolean; qrUrl?: string; instructions: string; accountDisplay: string }>("/api/payment/qr")
-      .then(setQr)
-      .catch(() => setQr({ enabled: false, instructions: "Contact the print desk for payment.", accountDisplay: "XeroxEase Print Desk" }));
-  }, []);
-
-  const amount = formatCurrencyINR(order.totalAmount);
-
-  return (
-    <div className="space-y-5">
-      <h1 className="text-xl font-extrabold text-white">QR Payment</h1>
-      <Card className="text-center space-y-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-zinc-500 font-semibold">Amount to pay</p>
-          <p className="text-3xl font-extrabold text-white mt-1">{amount}</p>
-          <p className="text-xs text-zinc-500 mt-1">Order {order.orderNumber}</p>
-        </div>
-        {qr?.enabled && qr.qrUrl ? (
-          <div className="mx-auto w-fit rounded-2xl bg-white p-3 shadow-glow">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={qr.qrUrl} alt="Payment QR code" className="h-52 w-52 object-contain" />
-          </div>
-        ) : (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
-            The payment QR is not configured yet. Please pay at the desk or check back shortly.
-          </div>
-        )}
-        <p className="text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">{qr?.instructions}</p>
-        <p className="text-xs text-zinc-500">{qr?.accountDisplay}</p>
-      </Card>
-
-      <Card className="space-y-4">
-        <div>
-          <Label htmlFor="ref" required>Transaction reference / UTR</Label>
-          <div className="flex gap-2">
-            <Input id="ref" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="e.g. 402512345678" />
-            <Button
-              type="button" variant="ghost" onClick={() => { navigator.clipboard.writeText(order.orderNumber); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-              icon={copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            >
-              Copy order no.
-            </Button>
-          </div>
-          <p className="text-[11px] text-zinc-500 mt-1.5">Found in your payment app&apos;s transaction history.</p>
-        </div>
-        {error && <FieldError message={error} />}
-        <Button className="w-full" size="lg" onClick={onSubmit} loading={submitting} disabled={reference.trim().length < 4} onClickCapture={undefined}>
-          I&apos;ve paid — submit for verification
-        </Button>
-        <p className="text-[11px] text-zinc-500 text-center">
-          Payments are verified by the print desk. You&apos;ll be notified when confirmed — usually within minutes during working hours.
-        </p>
-        <button onClick={onDone} className="text-xs text-zinc-500 hover:text-zinc-300 underline mx-auto block">
-          I&apos;ll pay later — go to my order
-        </button>
-      </Card>
     </div>
   );
 }

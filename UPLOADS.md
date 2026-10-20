@@ -116,6 +116,31 @@ the browser decide", which for PDFs is inline.
 The student link carries `rel="noopener noreferrer"` because the response's `Location`
 embeds a bearer token — no referrer must be able to carry it onward.
 
+### 3.1 Order-scoped admin download (fulfillment view)
+
+The admin order-detail screen does **not** call `/api/files/:id/download` with a guessed
+id. It uses:
+
+`GET /api/admin/orders/:orderId/files/:fileId/download?mode=view|download`
+
+Before signing/streaming, the route verifies **all** of:
+
+1. the caller is `ADMIN`/`SUPER_ADMIN` (server-side role, never a query param);
+2. the order exists;
+3. `file.orderId === order.id` — the file is actually attached to this order;
+4. `file.uploaderId === order.userId` — it belongs to that order's student;
+5. `file.status === "COMPLETED"` and `file.storageKey` is present.
+
+Every negative case returns the same `404 FILE_NOT_FOUND`, so ids cannot be used to probe
+for other students' documents. The response never contains the storage key: Supabase
+returns a `307` to a short-lived signed URL, local storage streams the bytes with
+`Content-Disposition` built from the stored original filename (CR/LF/quotes/path
+characters stripped, non-ASCII names carried by RFC 5987 `filename*`). Signing or storage
+failure returns a generic `503`; the UI shows a retry message. Rate limited per admin.
+
+The bucket remains **private**; this route does not change bucket visibility, does not
+create public links and does not bypass upload-completion verification.
+
 ---
 
 ## 4. Bucket configuration (operator task — never created by this app)

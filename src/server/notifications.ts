@@ -88,4 +88,20 @@ export const NOTIFY = {
       body: `Your order ${orderNumber} has been cancelled.`,
       orderId,
     }),
+  orderRejected: (userId: string, orderNumber: string, reason: string, orderId: string) =>
+    notify({
+      userId,
+      type: "ORDER_REJECTED",
+      title: "Order not accepted",
+      body: `Your order ${orderNumber} was not accepted by the print desk.${reason ? ` Reason: ${reason}` : ""}`,
+      orderId,
+    }),
+  orderAccepted: (userId: string, orderNumber: string, orderId: string) =>
+    notify({
+      userId,
+      type: "ORDER_ACCEPTED",
+      title: "Order accepted",
+      body: `Your order ${orderNumber} has been accepted for printing. Payment options are now available.`,
+      orderId,
+    }),
 };

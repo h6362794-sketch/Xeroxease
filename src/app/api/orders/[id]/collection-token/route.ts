@@ -12,8 +12,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const order = await prisma.order.findUnique({ where: { id } });
     if (!order) return apiError("Order not found.", 404);
     if (order.userId !== user.id) return apiError("You do not have access to this order.", 403);
-    if (order.status !== "READY_FOR_COLLECTION") {
-      return apiError("Collection code is available once the order is ready for collection.", 409);
+    if (!["READY_FOR_PICKUP", "READY_FOR_COLLECTION"].includes(order.status)) {
+      return apiError("Collection code is available once the order is ready for pickup.", 409);
     }
 
     // Ensure a token hash exists (defensive re-attach).

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Button, Card, Input, Skeleton } from "@/components/ui";
+import { Button, Card, Input, Skeleton, EmptyState } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api-client";
 import { formatCurrencyINR } from "@/lib/utils";
@@ -15,18 +15,42 @@ interface PriceRow {
   isActive: boolean;
 }
 
+interface PriceHistory {
+  id: string;
+  actorId: string | null;
+  actorRole: string | null;
+  metadata: unknown;
+  createdAt: string;
+}
+
+function historyLines(metadata: unknown): string[] {
+  if (!metadata || typeof metadata !== "object") return [];
+  const changes = (metadata as { changes?: unknown }).changes;
+  if (!Array.isArray(changes)) return [];
+  return changes
+    .filter((c): c is { key: string; from: number | null; to: number } =>
+      Boolean(c) && typeof c === "object" && typeof (c as { key?: unknown }).key === "string"
+    )
+    .map((c) => `${c.key}: ${c.from ?? "—"} → ${c.to}`);
+}
+
 export function AdminPricing({ canEdit }: { canEdit: boolean }) {
   const [rows, setRows] = useState<PriceRow[] | null>(null);
+  const [history, setHistory] = useState<PriceHistory[]>([]);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const toast = useToast();
 
   const load = useCallback(async () => {
+    setError(null);
     try {
-      const data = await api<{ pricing: PriceRow[] }>("/api/admin/pricing");
+      const data = await api<{ pricing: PriceRow[]; history: PriceHistory[] }>("/api/admin/pricing");
       setRows(data.pricing);
+      setHistory(data.history ?? []);
     } catch {
       setRows([]);
+      setError("Pricing could not be loaded. Please retry.");
     }
   }, []);
 
@@ -35,17 +59,26 @@ export function AdminPricing({ canEdit }: { canEdit: boolean }) {
   }, [load]);
 
   async function save() {
-    setBusy(true);
-    try {
-      const items = Object.entries(edits)
-        .filter(([, v]) => v !== "" && Number(v) >= 0)
-        .map(([key, v]) => ({ key, unitPrice: Number(v) }));
-      if (items.length === 0) {
-        toast("No changes to save.", "info");
+    const items: { key: string; unitPrice: number }[] = [];
+    for (const [key, raw] of Object.entries(edits)) {
+      if (raw.trim() === "") continue;
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 0 || value > 10000 || Math.round(value * 100) !== value * 100) {
+        toast("Prices must be finite, between 0 and 10000, with at most 2 decimals.", "error");
         return;
       }
+      const original = rows?.find((r) => r.key === key)?.unitPrice;
+      if (original === value) continue;
+      items.push({ key, unitPrice: value });
+    }
+    if (items.length === 0) {
+      toast("No changes to save.", "info");
+      return;
+    }
+    setBusy(true);
+    try {
       await api("/api/admin/pricing", { method: "PATCH", json: { items } });
-      toast("Pricing updated.", "success");
+      toast("Pricing updated for new orders. Existing orders keep their original amounts.", "success");
       setEdits({});
       load();
     } catch (err) {
@@ -76,13 +109,38 @@ export function AdminPricing({ canEdit }: { canEdit: boolean }) {
         </p>
       </div>
 
+      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+
       <Card className="space-y-5">
         <PriceGroup title="Printing" rows={prints} canEdit={canEdit} edits={edits} setEdits={setEdits} />
         <PriceGroup title="Finishing" rows={finishings} canEdit={canEdit} edits={edits} setEdits={setEdits} />
         {canEdit && (
-          <div className="pt-2 border-t border-white/10">
-            <Button onClick={save} loading={busy}>Save changes</Button>
+          <div className="pt-2 border-t border-white/10 flex flex-wrap items-center gap-3">
+            <Button onClick={save} loading={busy} className="min-h-11">Save changes</Button>
+            <p className="text-[11px] text-zinc-500">
+              Applies to new orders only. Existing totals and their pricing snapshots never change.
+            </p>
           </div>
+        )}
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="font-bold text-white">Price change history</h2>
+        {history.length === 0 ? (
+          <EmptyState title="No price changes recorded yet." sub="Every update is audited with the previous and new value, actor and timestamp." />
+        ) : (
+          <ul className="space-y-2">
+            {history.map((h) => (
+              <li key={h.id} className="rounded-xl bg-white/[0.03] px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-white">Price update</span>
+                  <time className="text-zinc-500" dateTime={h.createdAt}>{new Date(h.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</time>
+                </div>
+                <p className="text-zinc-400 mt-1 break-words">{historyLines(h.metadata).join(" · ") || "Updated pricing configuration"}</p>
+                <p className="text-[10px] text-zinc-600 mt-0.5">{h.actorRole?.toLowerCase() ?? "admin"} · {h.actorId ? h.actorId.slice(0, 8) : "unknown"}</p>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
     </div>
@@ -112,7 +170,7 @@ function PriceGroup({
               <div className="flex items-center gap-2">
                 <span className="text-sm text-zinc-500">₹</span>
                 <Input
-                  type="number" min={0} step="0.5"
+                  type="number" min={0} max={10000} step="0.01" inputMode="decimal"
                   className="w-24 text-right"
                   value={edits[r.key] ?? String(r.unitPrice)}
                   onChange={(e) => setEdits((prev) => ({ ...prev, [r.key]: e.target.value }))}

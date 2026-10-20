@@ -20,6 +20,13 @@ enum Role {
 }
 
 enum OrderStatus {
+  // Legacy statuses first: this preserves the original enum value order so the
+  // additive migration only appends new values.
+  //
+  // Legacy rows are retained verbatim so historical orders keep the state they
+  // actually reached — they are never silently rewritten. No new order is created
+  // in these states; legacy rows remain readable and can still be progressed (or
+  // rejected/cancelled) through the legacy transitions.
   ORDER_PLACED
   PAYMENT_PENDING
   PAYMENT_UNDER_REVIEW
@@ -32,6 +39,22 @@ enum OrderStatus {
   COMPLETED
   CANCELLED
   FAILED
+
+  // Canonical lifecycle (new orders). See src/lib/order-status.ts for the
+  // authoritative transition table shared by API, admin and student portals:
+  //   ORDER_RECEIVED -> ACCEPTED -> PRINTING -> READY_FOR_PICKUP -> DELIVERED
+  //   ORDER_RECEIVED/ACCEPTED -> REJECTED (reason required)
+  //   ORDER_RECEIVED -> CANCELLED (student, pre-acceptance only)
+  ORDER_RECEIVED
+  ACCEPTED
+  READY_FOR_PICKUP
+  DELIVERED
+  REJECTED
+}
+
+enum PaymentMethod {
+  CASH_ON_DELIVERY
+  UPI
 }
 
 enum PaymentStatus {
@@ -75,6 +98,8 @@ enum NotificationType {
   ORDER_READY
   ORDER_COMPLETED
   ORDER_CANCELLED
+  ORDER_REJECTED
+  ORDER_ACCEPTED
   FEEDBACK_REQUEST
   SYSTEM
 }
@@ -231,15 +256,35 @@ model Order {
   finishingFee Decimal  @db.Decimal(10, 2) @map("finishing_fee")
   totalAmount  Decimal  @db.Decimal(10, 2) @map("total_amount")
 
-  status       OrderStatus @default(ORDER_PLACED)
+  // Historical price snapshot. `pricePerPage`/`finishingFee`/`totalAmount` above
+  // are the authoritative amount agreed at order time; this JSON also records the
+  // full active price table and finishing selections used for that calculation,
+  // so a later price-list edit can never rewrite or re-derive a past total.
+  pricingSnapshot Json? @map("pricing_snapshot")
+  finishingOptions String[] @default([]) @map("finishing_options")
+
+  status       OrderStatus @default(ORDER_RECEIVED)
   paymentStatus PaymentStatus @default(PAYMENT_PENDING) @map("payment_status")
 
-  // Payment proof
+  // Payment method is an explicit student choice, recorded after acceptance.
+  // Payment status is deliberately separate from `status`: confirming money is
+  // not a printing-stage transition.
+  paymentMethod PaymentMethod? @map("payment_method")
+
+  // Payment proof / verification
   paymentRef   String?  @map("payment_ref")
   paymentProofAt DateTime? @map("payment_proof_at")
   paymentVerifiedBy String? @map("payment_verified_by")
   paymentVerifiedAt DateTime? @map("payment_verified_at")
   paymentNote  String?  @map("payment_note")
+
+  // Lifecycle audit fields (status history itself lives in OrderEvent).
+  acceptedAt   DateTime? @map("accepted_at")
+  acceptedBy   String?  @map("accepted_by")
+  rejectedAt   DateTime? @map("rejected_at")
+  rejectedBy   String?  @map("rejected_by")
+  rejectionReason String? @map("rejection_reason")
+  deliveredAt  DateTime? @map("delivered_at")
 
   // Collection token (QR)
   collectionTokenHash String? @map("collection_token_hash")
@@ -266,6 +311,7 @@ model Order {
   @@index([userId, status])
   @@index([status])
   @@index([paymentStatus])
+  @@index([paymentMethod, paymentStatus])
   @@index([createdAt])
   @@index([orderNumber])
   @@map("orders")

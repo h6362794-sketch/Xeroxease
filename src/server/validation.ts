@@ -7,6 +7,7 @@ import {
   FINISHING_OPTIONS,
   MAX_FILES_PER_ORDER,
   PAPER_SIZES,
+  PAYMENT_METHODS,
   PRINT_SIDES,
 } from "@/lib/constants";
 
@@ -107,8 +108,29 @@ export const orderCreateSchema = orderConfigSchema.extend({
     .max(MAX_FILES_PER_ORDER, `You can attach at most ${MAX_FILES_PER_ORDER} documents.`),
 });
 
+/**
+ * UPI reference. Shape is normalized and strictly validated in
+ * `normalizeUpiReference` (server-side, also unit-tested); this schema only
+ * bounds the raw input so oversized bodies are rejected before any work.
+ */
 export const paymentSubmitSchema = z.object({
-  reference: z.string().trim().min(4, "Reference too short").max(64),
+  reference: z.string().trim().min(1, "Enter the transaction reference").max(128),
+});
+
+/** Student payment-method choice, only valid after admin acceptance. */
+export const paymentMethodSchema = z.object({
+  method: z.enum(PAYMENT_METHODS),
+});
+
+/** Admin payment decision (verify / reject). */
+export const paymentDecisionSchema = z.object({
+  note: z.string().trim().max(500).optional().or(z.literal("")),
+  // Verification is irreversible; the UI must send an explicit acknowledgement.
+  confirm: z.boolean().optional(),
+});
+
+export const paymentRejectionSchema = z.object({
+  reason: z.string().trim().min(3, "A rejection reason is required.").max(500),
 });
 
 export const feedbackSchema = z.object({
@@ -124,18 +146,31 @@ export const pricingUpdateSchema = z.object({
   items: z
     .array(
       z.object({
-        key: z.string().min(2).max(40),
-        unitPrice: z.coerce.number().min(0).max(100000),
+        key: z.string().trim().min(2).max(40),
+        // Finite, non-negative and bounded. `z.coerce.number()` alone accepts
+        // Infinity in some coercion paths, so finiteness is explicit.
+        unitPrice: z.coerce
+          .number()
+          .finite("Price must be a finite number")
+          .min(0, "Price cannot be negative")
+          .max(10000, "Price is above the configured maximum")
+          .refine((n) => Math.round(n * 100) === n * 100, "Price may have at most 2 decimal places"),
         isActive: z.boolean().optional(),
       })
     )
     .min(1)
-    .max(50),
+    .max(50)
+    .refine(
+      (items) => new Set(items.map((i) => i.key)).size === items.length,
+      "Each pricing key may appear only once."
+    ),
 });
 
 export const adminStatusUpdateSchema = z.object({
-  status: z.string().min(4).max(40),
+  status: z.string().trim().min(4).max(40),
   note: z.string().trim().max(500).optional().or(z.literal("")),
+  /** Required for DELIVERED/REJECTED by the service (defence in depth). */
+  confirm: z.boolean().optional(),
 });
 
 export const pageCountConfirmSchema = z.object({
