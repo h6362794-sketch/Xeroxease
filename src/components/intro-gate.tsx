@@ -1,9 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Button } from "./ui";
 import { LogoMark } from "./logo";
+
+// In-memory fallback when sessionStorage is unavailable (also survives route remounts).
+let introDismissed = false;
 
 /**
  * Opening experience: plays the user-provided XeroxEase intro animation.
@@ -19,99 +22,133 @@ import { LogoMark } from "./logo";
  */
 export function IntroGate({ children }: { children: React.ReactNode }) {
   const [showIntro, setShowIntro] = useState(false);
+  const [introPresent, setIntroPresent] = useState(false);
+  const reducedMotion = useReducedMotion();
   const [ready, setReady] = useState(false);
   const [playbackFailed, setPlaybackFailed] = useState(false);
+  const previousOverflow = useRef("");
+  const dialogRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    let seen = false;
+    previousOverflow.current = document.body.style.overflow;
+    let seen = introDismissed;
     try {
-      seen = sessionStorage.getItem("xe_intro_seen") === "1";
+      seen = seen || sessionStorage.getItem("xe_intro_seen") === "1";
     } catch {
-      // Storage can be blocked; showing the intro once is harmless.
+      // The module-level flag still remembers dismissal for this page lifetime.
     }
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!reduced && !seen) {
       setShowIntro(true);
+      setIntroPresent(true);
       document.body.style.overflow = "hidden";
     }
     setReady(true);
     return () => {
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow.current;
     };
   }, []);
 
   const finish = useCallback(() => {
+    introDismissed = true;
     try {
       sessionStorage.setItem("xe_intro_seen", "1");
     } catch {
       // ignore
     }
-    document.body.style.overflow = "";
+    videoRef.current?.pause();
     setShowIntro(false);
   }, []);
 
   useEffect(() => {
+    if (!introPresent) return;
+    const previous = document.activeElement;
+    const dialog = dialogRef.current;
+    const controls = () => Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    controls().at(-1)?.focus();
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onMotionChange = () => { if (reduced.matches) finish(); };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") finish();
+      if (e.key === "Tab") {
+        const buttons = controls();
+        const first = buttons[0];
+        const last = buttons.at(-1);
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault(); last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault(); first?.focus();
+        }
+      }
     };
-    if (showIntro) document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [showIntro, finish]);
+    document.addEventListener("keydown", onKey);
+    reduced.addEventListener("change", onMotionChange);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      reduced.removeEventListener("change", onMotionChange);
+      document.body.style.overflow = previousOverflow.current;
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, [introPresent, finish]);
 
   if (!ready) return null;
 
   return (
     <>
-      <AnimatePresence>
+      <AnimatePresence onExitComplete={() => setIntroPresent(false)}>
         {showIntro && (
           <motion.div
-            className="fixed inset-0 z-[200] overflow-hidden bg-black flex flex-col cursor-pointer"
+            ref={dialogRef}
+            className="intro-overlay fixed inset-0 z-[200] overflow-hidden bg-black flex flex-col cursor-pointer"
             initial={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 1.02 }}
-            transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reducedMotion ? 0 : 0.5, ease: [0.32, 0.72, 0, 1] }}
             onClick={finish}
             role="dialog"
             aria-modal="true"
             aria-label="XeroxEase introduction. Press Escape or use Skip Intro to continue."
           >
-            {!playbackFailed ? (
-              <video
-                ref={videoRef}
-                // `object-contain` is deliberate: the intro composition must remain
-                // fully visible. `object-cover` used to crop it on narrow screens.
-                // The video owns the flexible row above the branding strip, so the
-                // overlay can never sit on top of the artwork.
-                className="relative z-0 min-h-0 w-full flex-1 object-contain bg-black"
-                src="/brand/xeroxease-intro.mp4"
-                poster="/brand/xeroxease-logo.jpeg"
-                autoPlay
-                muted
-                playsInline
-                preload="metadata"
-                controls={false}
-                aria-label="XeroxEase animated introduction"
-                onEnded={finish}
-                onError={() => setPlaybackFailed(true)}
-              />
-            ) : (
-              <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-                <LogoMark size={72} className="ring-2 ring-white/20" />
-                <p className="text-2xl font-extrabold text-white">XeroxEase</p>
-                <p className="text-sm text-zinc-400 max-w-xs">
-                  The intro animation could not play on this device or connection.
-                </p>
-                <Button
-                  variant="brand"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    finish();
-                  }}
-                >
-                  Enter site
-                </Button>
-              </div>
-            )}
+            <div className="intro-stage">
+              {!playbackFailed ? (
+                <video
+                  ref={videoRef}
+                  // `object-contain` is deliberate: the intro composition must remain
+                  // fully visible. `object-cover` used to crop it on narrow screens.
+                  // The stage is sized above the branding strip; CSS changes its
+                  // presentation ratio without replacing the source or playhead.
+                  className="intro-frame relative z-0 object-contain bg-black"
+                  src="/brand/xeroxease-intro.mp4"
+                  poster="/brand/xeroxease-logo.jpeg"
+                  autoPlay
+                  muted
+                  playsInline
+                  preload="metadata"
+                  controls={false}
+                  aria-label="XeroxEase animated introduction"
+                  onEnded={finish}
+                  onError={() => setPlaybackFailed(true)}
+                />
+              ) : (
+                <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+                  <LogoMark size={72} className="ring-2 ring-white/20" />
+                  <p className="text-2xl font-extrabold text-white">XeroxEase</p>
+                  <p className="text-sm text-zinc-400 max-w-xs">
+                    The intro animation could not play on this device or connection.
+                  </p>
+                  <Button
+                    variant="brand"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      finish();
+                    }}
+                  >
+                    Enter site
+                  </Button>
+                </div>
+              )}
+
+            </div>
 
             <div className="absolute right-4 top-[max(1rem,env(safe-area-inset-top))] z-10 sm:right-6">
               <Button
@@ -141,7 +178,7 @@ export function IntroGate({ children }: { children: React.ReactNode }) {
           </motion.div>
         )}
       </AnimatePresence>
-      {children}
+      <div inert={introPresent || undefined}>{children}</div>
     </>
   );
 }

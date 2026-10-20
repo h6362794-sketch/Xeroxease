@@ -67,3 +67,30 @@ describe("intro assets", () => {
     });
   }
 });
+
+describe("orientation-aware presentation", () => {
+  const css = readFileSync(path.join(root, "src/app/globals.css"), "utf8");
+  it("fits both ratios against the available stage with dynamic viewport sizing", () => {
+    expect(css).toContain("height: 100dvh");
+    expect(css).toContain("container-type: size");
+    expect(css).toContain("aspect-ratio: 16 / 9");
+    expect(css).toContain("(max-width: 767px) and (orientation: portrait)");
+    expect(css).toContain("aspect-ratio: 9 / 16");
+    expect(css).toContain("calc(100cqh * 9 / 16)");
+  });
+  it("retains one video across CSS orientation changes and isolates modal focus", () => {
+    expect(code.match(/<video\b/g)).toHaveLength(1);
+    expect(code).toContain("inert={introPresent || undefined}");
+    expect(code).toContain('e.key === "Tab"');
+    expect(code).toContain('reduced.addEventListener("change"');
+    expect(code).toContain("videoRef.current?.pause()");
+  });
+  it("uses the existing 1280x720 landscape track without cropping or generating new imagery", () => {
+    const video = readFileSync(path.join(root, "public/brand/xeroxease-intro.mp4"));
+    const tkhd = video.indexOf(Buffer.from("tkhd"));
+    expect(tkhd).toBeGreaterThan(4);
+    const end = tkhd - 4 + video.readUInt32BE(tkhd - 4);
+    expect(video.readUInt32BE(end - 8) / 65536).toBe(1280);
+    expect(video.readUInt32BE(end - 4) / 65536).toBe(720);
+  });
+});

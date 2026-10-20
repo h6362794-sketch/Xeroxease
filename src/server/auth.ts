@@ -10,29 +10,31 @@ import type { Role } from "@prisma/client";
 
 type HashResult = { hash: string; algo: "argon2id" | "bcrypt" };
 
-let argon2Module: typeof import("argon2") | null = null;
-let argon2Tried = false;
+// Share the pending import as well as its result. A boolean "tried" flag can
+// make concurrent cold-start logins observe null before the first import ends,
+// rejecting correct argon2 passwords and incrementing the lockout counter.
+let argon2Promise: Promise<typeof import("argon2") | null> | undefined;
 
-async function getArgon2() {
-  if (argon2Tried) return argon2Module;
-  argon2Tried = true;
-  try {
-    const mod = await import("argon2");
-    argon2Module = mod.default ?? (mod as unknown as typeof import("argon2"));
-  } catch (err) {
-    argon2Module = null;
-    // New hashes still use the bcrypt fallback, but existing argon2id
-    // hashes can no longer be verified, which surfaces as a generic
-    // "Invalid credentials" for every affected user. Make the
-    // operator-visible cause explicit once per process.
-    console.warn(
-      "[auth] argon2 failed to load; falling back to bcrypt for NEW hashes. " +
-        "Existing argon2id hashes cannot be verified until argon2 loads " +
-        "correctly. Cause: " +
-        (err instanceof Error ? err.message : String(err))
-    );
+function getArgon2(): Promise<typeof import("argon2") | null> {
+  if (!argon2Promise) {
+    argon2Promise = (async () => {
+      try {
+        const mod = await import("argon2");
+        return mod.default ?? (mod as unknown as typeof import("argon2"));
+      } catch (err) {
+        // Warn once per process on a real import failure; NEW hashes still use
+        // bcrypt, but existing argon2id hashes cannot be verified until repaired.
+        console.warn(
+          "[auth] argon2 failed to load; falling back to bcrypt for NEW hashes. " +
+            "Existing argon2id hashes cannot be verified until argon2 loads " +
+            "correctly. Cause: " +
+            (err instanceof Error ? err.message : String(err))
+        );
+        return null;
+      }
+    })();
   }
-  return argon2Module;
+  return argon2Promise;
 }
 
 export async function hashPassword(plain: string): Promise<HashResult> {

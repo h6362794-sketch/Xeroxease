@@ -8,7 +8,7 @@ import { formatCurrencyINR, formatDateShort, timeAgo } from "@/lib/utils";
 import { getRecoveryCodeStatus } from "@/server/recovery";
 import { ShieldAlert } from "lucide-react";
 import { SupportContact } from "@/components/support-contact";
-import { statusLabel } from "@/lib/order-status";
+import { TERMINAL_STATUSES, statusLabel } from "@/lib/order-status";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +17,7 @@ export default async function DashboardPage() {
 
   const [activeOrder, recentOrders, stats, recovery] = await Promise.all([
     prisma.order.findFirst({
-      where: { userId: user.id, status: { notIn: ["COMPLETED", "CANCELLED", "FAILED"] } },
+      where: { userId: user.id, status: { notIn: [...TERMINAL_STATUSES] } },
       orderBy: { createdAt: "desc" },
     }),
     prisma.order.findMany({
