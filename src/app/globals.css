@@ -250,3 +250,27 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Size the presentation against the space actually left above the brand strip.
+   CSS-only orientation changes preserve the single video element/playhead. */
+.intro-overlay {
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+.intro-stage {
+  container-type: size;
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+}
+.intro-frame {
+  width: min(100cqw, calc(100cqh * 16 / 9));
+  aspect-ratio: 16 / 9;
+}
+@media (max-width: 767px) and (orientation: portrait) {
+  .intro-frame {
+    width: min(100cqw, calc(100cqh * 9 / 16));
+    aspect-ratio: 9 / 16;
+  }
+}

@@ -420,6 +420,14 @@ Do not "fix" a failing audit job by adding broad dependency overrides or by
 re-introducing `continue-on-error`. Remediate §12.2 or record an accepted risk here.
 
 
+### 12.6 Launch gate clarification (2026-10-20)
+
+The technical exposure assessment and “accepted risk” wording above are **not**
+proof of owner-signed risk acceptance. `GHSA-vfj7-8cjw-p6xm` remains a launch
+blocker until officially resolved or the required owner-signed acceptance is
+recorded. The failing dependency-audit job must remain enforced; this investigation
+does not authorize a deployment or waive that gate.
+
 ## 13. Fixed defect: security headers were never applied
 
 **Found and fixed 2026-10-14.** `middleware.ts` was committed at the *repository root*,

@@ -296,6 +296,16 @@ describe("role guards", () => {
 });
 
 describe("password hashing and verification (real argon2/bcrypt)", () => {
+  it("does not reject a concurrent valid login while the argon2 module is loading", async () => {
+    const argon2 = await import("argon2");
+    const hash = await argon2.hash("Str0ngPass!", { type: argon2.argon2id });
+    const auth = await load(); // fresh auth module: its lazy import has not run
+    expect(await Promise.all([
+      auth.verifyPassword("Str0ngPass!", hash),
+      auth.verifyPassword("Str0ngPass!", hash),
+    ])).toEqual([true, true]);
+  });
+
   it("hashes with argon2id and verifies round-trip", async () => {
     const auth = await load();
     const { hash, algo } = await auth.hashPassword("Str0ngPass!");

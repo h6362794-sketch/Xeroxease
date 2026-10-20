@@ -5,8 +5,12 @@ import { Button } from "@/components/ui";
 
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
-    // Detailed diagnostics go to the console (server logs in production).
-    console.error("[app-error]", error);
+    // This is a browser event; server diagnostics are in instrumentation.ts.
+    console.error("[app-error]", {
+      digest: error.digest,
+      pathname: window.location.pathname,
+      timestamp: new Date().toISOString(),
+    });
   }, [error]);
 
   return (
