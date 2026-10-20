@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Button, Input, Label, FieldError } from "@/components/ui";
+import { SupportContact } from "@/components/support-contact";
 import { api, ApiError } from "@/lib/api-client";
 
 export default function LoginPage() {
@@ -108,6 +109,10 @@ export default function LoginPage() {
           Sign in here
         </Link>
       </p>
+
+      <div className="mt-6 border-t border-white/10 pt-3 flex justify-center">
+        <SupportContact />
+      </div>
     </motion.div>
   );
 }

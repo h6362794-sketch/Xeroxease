@@ -20,7 +20,11 @@ const DEFAULTS: AppSettings = {
   paymentInstructions:
     "Scan the QR code with any UPI app, complete the payment, then submit the transaction reference below. Payment will be confirmed after verification by the XeroxEase desk.",
   paymentAccountDisplay: "XeroxEase Print Desk",
+  // Only pre-acceptance statuses. `isStudentCancellable` intersects this with a
+  // hard-coded pre-acceptance set, so configuration can never re-enable
+  // cancellation after an admin has accepted an order.
   cancellationAllowedStatuses: [
+    "ORDER_RECEIVED",
     "ORDER_PLACED",
     "PAYMENT_PENDING",
     "PAYMENT_UNDER_REVIEW",

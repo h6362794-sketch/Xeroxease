@@ -4,13 +4,15 @@ import { apiError, enforceRateLimit, json, parseBody, withErrorHandling } from "
 import { RATE_LIMITS } from "@/server/rate-limit";
 import { orderCreateSchema } from "@/server/validation";
 import { createOrder } from "@/server/orders";
+import { ORDER_STATUS_VALUES } from "@/lib/order-status";
 
 export async function GET(req: Request) {
   return withErrorHandling(async () => {
     const user = await requireUser();
     const url = new URL(req.url);
-    const q = url.searchParams.get("q")?.trim() || "";
-    const status = url.searchParams.get("status") || "";
+    const q = (url.searchParams.get("q")?.trim() || "").slice(0, 100);
+    const rawStatus = url.searchParams.get("status") || "";
+    const status = (ORDER_STATUS_VALUES as readonly string[]).includes(rawStatus) ? rawStatus : "";
     const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
     const pageSize = Math.min(50, Math.max(5, parseInt(url.searchParams.get("pageSize") || "10", 10) || 10));
 
@@ -37,7 +39,9 @@ export async function GET(req: Request) {
           copies: true,
           colorMode: true,
           paperSize: true,
+          pageSelection: true,
           createdAt: true,
+          updatedAt: true,
           feedback: { select: { id: true, rating: true } },
         },
       }),

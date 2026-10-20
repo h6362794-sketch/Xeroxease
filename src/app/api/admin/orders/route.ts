@@ -1,17 +1,26 @@
 import { prisma } from "@/lib/prisma";
-import { requireRole, isAdminRole, getSessionUser } from "@/server/auth";
-import { apiError, json, withErrorHandling } from "@/server/api-utils";
+import { isAdminRole, getSessionUser } from "@/server/auth";
+import { apiError, enforceRateLimit, json, withErrorHandling } from "@/server/api-utils";
+import { RATE_LIMITS } from "@/server/rate-limit";
+import { ORDER_STATUS_VALUES } from "@/lib/order-status";
 
 export async function GET(req: Request) {
   return withErrorHandling(async () => {
     const user = await getSessionUser();
     if (!user || !isAdminRole(user.role)) return apiError("Forbidden.", 403);
 
+    const limited = await enforceRateLimit(req, RATE_LIMITS.admin, "admin-orders", user.id);
+    if (limited) return limited;
+
     const url = new URL(req.url);
-    const q = url.searchParams.get("q")?.trim() || "";
-    const status = url.searchParams.get("status") || "";
+    const q = (url.searchParams.get("q")?.trim() || "").slice(0, 100);
+    const rawStatus = url.searchParams.get("status") || "";
+    const status = (ORDER_STATUS_VALUES as readonly string[]).includes(rawStatus) ? rawStatus : "";
     const paymentStatus = url.searchParams.get("paymentStatus") || "";
-    const sort = url.searchParams.get("sort") || "createdAt";
+    // Fixed sort columns only: a client-supplied Prisma orderBy field is not an input.
+    const sort = ["createdAt", "updatedAt", "totalAmount", "orderNumber"].includes(url.searchParams.get("sort") || "")
+      ? (url.searchParams.get("sort") as string)
+      : "createdAt";
     const dir = url.searchParams.get("dir") === "asc" ? "asc" : "desc";
     const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
     const pageSize = Math.min(100, Math.max(5, parseInt(url.searchParams.get("pageSize") || "15", 10) || 15));

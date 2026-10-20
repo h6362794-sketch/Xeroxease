@@ -9,8 +9,9 @@ npm run typecheck   # strict TypeScript
 npm run lint        # ESLint (Next.js core-web-vitals)
 ```
 
-Current suite: **286 tests in 20 files** — 282 pass, 4 skip (the PostgreSQL-only
-concurrency file plus its guards, which need a real database). `npm test`.
+Current suite (measured 2026-10-20): **575 tests in 39 files** — **571 pass, 4 skip**
+(the PostgreSQL-only concurrency file plus its guards, which need a real database).
+`npm test`.
 
 The suite grew the same way the security surface did: each incident/audit finding that
 produced a code change also produced a file that would fail if the change were reverted.
@@ -48,6 +49,16 @@ is documentation, not a guard.
 | `tests/order-route.test.ts` | **`POST /api/orders` end to end over an in-memory Prisma stand-in** (20): a completed, verified upload creates exactly one order priced by the server; **the body is read exactly once and never cloned (regression for `TypeError: unusable`)**; client-supplied prices/status/page counts are dropped; empty, non-UUID, over-limit, foreign, unfinished/expired, unanalyzed and already-ordered references are refused without a write; 401/403/429/400 paths; **a failed transaction leaves no order, event or file attachment behind and a retry commits once**; database errors become a generic 500 with no connection string or stack, correlated in the server log |
 | `tests/admin-analytics-route.test.ts` | **`GET /api/admin/analytics` pool pressure** (4): admin gate before any query; full dashboard payload; **15 queries never exceed 4 in flight** (regression for P2024 pool timeouts on a `connection_limit=1` client); a pool timeout becomes a generic 500 with no connection string, code or hostname |
 | `tests/db-concurrency.test.ts` | **Bounded query fan-out helper** (6): tuple result order preserved, **per-index result types kept (compile-time guard against tuple inference collapsing to a union)**, peak concurrency equals the limit, empty/short lists, first rejection propagates |
+| `tests/order-lifecycle.test.ts` | **Authoritative lifecycle** (22): five visible stages and labels, legacy folding, rejection/cancellation never shown as progress, canonical edges, skips/reversals/self/unknown states, terminal states, rejection as an outcome, confirmation/reason rules, pre-acceptance cancellation that settings cannot widen, payment eligibility as a separate axis |
+| `tests/order-lifecycle-service.test.ts` | **Admin transition + cancellation service** (13, in-memory Prisma): role gate, accepted timestamp/actor + history, invalid/repeat transitions, delivery confirmation, rejection reason, collection-token attachment, **concurrent writer → 409 with no event/notification/audit**, owner-only cancellation, accepted → 409, settings narrowing, **accept/cancel race → exactly one winner** |
+| `tests/payment-lifecycle.test.ts` | **Payment invariants** (31): method/state matrix, policy gates, reference normalization and masking, cash selection leaves `PAYMENT_PENDING`, UPI reference → `PAYMENT_UNDER_REVIEW` (never paid), audit logs store only the last four characters, admin-only verification, cash verification without a reference, duplicate/concurrent decisions → 409 with no history, rejection reason + resubmission |
+| `tests/admin-document-access.test.ts` | **Order-scoped document access** (17): role, file↔order, uploader↔owner, `COMPLETED`+storage-key matrix, identical 404s, signed-URL success/`no-store`, signing outage → 503, local streaming headers, safe `Content-Disposition` (CR/LF/quotes/path/RFC 5987), missing object |
+| `tests/admin-order-search.test.ts` | **Admin lookup validation** (15): query/control-char limits, enum whitelist, real calendar dates (rejects 2026-02-31), reversed/730-day ranges, page-size clamp, bound Prisma `where`, inclusive end-of-day, admin-only route, no storage/token fields in the response |
+| `tests/admin-order-detail.test.ts` | **Admin full detail** (5): admin-only, malformed/missing ids, canonical next transitions per stage, resolved actor names, numeric payment history, `pricingSnapshot`, no storage key/token hash/password fields, terminal stage offers nothing |
+| `tests/admin-payments-route.test.ts` | **Payment desk routes** (12): admin-only list, unknown state → 400 (no unfiltered fallback), review/cash filters, page-size cap, verify requires `confirm: true`, delegates order id + session actor, reject reason validation, malformed id |
+| `tests/admin-pricing.test.ts` | **Admin pricing** (11): schema bounds/finite/2-dp/duplicate/oversize, SUPER_ADMIN-only write, unknown key 422, no-op skip, conditional update + audit in one transaction, deactivation, **concurrent edit → 409 and rollback**, order table never touched, invalid input rejected before DB |
+| `tests/support-phone.test.ts` | **Helpline** (5): unset/invalid → no `tel:` link, common formats normalized, placeholder/non-dialable rejection, href contains only digits/leading `+`, `.env.example` ships an empty default (no invented number) |
+| `tests/intro-video.test.ts` | **Intro video fit** (7): `object-contain` and no `object-cover` in code, no fixed desktop height, `playsInline`/`muted`/`autoPlay`/poster, reduced-motion + Escape + Skip, error fallback, mounted once, assets present/non-empty/bounded |
 
 ## Security test matrix
 
@@ -106,13 +117,30 @@ Run the full flow from the spec's acceptance list:
 1. Register a student → login
 2. Upload a PDF → analysis shows page count
 3. Configure (A4, B&W, double-side, 2 copies, staple) → review shows estimate
-4. Place order → `XE-YYYY-NNNNNN` issued; server total in DB matches rate table
-5. Submit payment reference → status UNDER_REVIEW
-6. Admin → Payments → Verify → student notified, status PAYMENT_CONFIRMED
-7. Admin → Orders → PRINTING → QUALITY_CHECK → READY_FOR_COLLECTION
-8. Student → reveal collection code; admin verifies via `/api/admin/collection` → order COMPLETED, code single-use (replay rejected)
-9. Student rates the order; duplicate rating blocked
-10. Invoice printable from order page
+4. Place order → `XE-YYYY-NNNNNN` issued; server total matches the **active** rate table
+   and `pricing_snapshot` records the table used. Status is **Order Received**.
+5. Student order page: no payment controls yet; "cancel order" is available.
+6. Admin → Orders → open the order → **Accept**. Student timeline advances to
+   **Order Accepted**; cancellation is now hidden with an explanation, and the API
+   refuses it with `409`.
+7. Student chooses **UPI**, scans the configured QR, submits a reference → payment
+   becomes **Reference submitted / Under review**; it is **not** paid.
+8. Admin → Payments → Needs review → **Verify** (with confirmation) → payment
+   `PAYMENT_CONFIRMED`; the print status is unchanged. Repeat verification → `409`.
+9. Admin → order → **Printing** → **Ready for Pickup** (confirm). Student reveals the
+   collection code; admin verifies/consumes it → order **Delivered/Completed**. Code
+   replay is rejected.
+10. Student dashboard/orders show **Delivered**; admin analytics counts it as completed.
+11. Student rates the order (only once); invoice printable from the order page.
+12. Admin downloads each PDF from the admin order detail: preview inline, download with
+    the original filename; a file id from another order returns 404.
+
+Cash path: create a second order, accept it, choose **Cash on Delivery** → status stays
+`PAYMENT_PENDING`; at pickup the admin uses **Mark cash received** (confirm) → payment
+confirmed, actor/time recorded, print status untouched.
+
+Pricing path: as SUPER_ADMIN change `A4_BW`; the audit row shows previous → new. A new
+order uses the new rate; the existing order's stored total and snapshot do not change.
 
 
 ## Continuous integration
@@ -134,11 +162,19 @@ directory before deployment.
 
 ## What is and is not covered
 
-Covered by automated tests: pricing, page selection, file validation, status rules,
-collection-token concurrency, recovery-code lifecycle (generation, hashing, rotation
-atomicity, single-use concurrency, expiry, binding to an account, session revocation),
-client-IP resolution, upload size capping, storage-key safety, document-analysis
-states and order-creation rules.
+Covered by automated tests: pricing arithmetic and pricing-update authorization,
+page selection, file validation, the canonical and legacy status graph, admin transition
+and cancellation services (including race conflicts), payment policy and services
+(cash ≠ paid, reference ≠ paid, admin-only confirmation, duplicate/conflict handling),
+order-scoped document authorization and safe headers, admin search validation, order
+detail leakage, collection-token concurrency, recovery-code lifecycle, client-IP
+resolution, upload size capping, storage-key safety, document-analysis states and
+order-creation rules.
+
+Responsive layout, keyboard navigation, focus order, contrast, live-region announcements,
+helpline rendering with a real configured number, and the intro video on physical devices
+still need the manual pass in `RESPONSIVE-CHECKLIST.md` — the automated intro/helpline
+tests pin the code and configuration, not pixels.
 
 **Not** covered automatically, and still requiring manual verification:
 
@@ -181,3 +217,23 @@ Be clear about what a green test run does and does not prove in this environment
   the first real CI run) is exactly that failure mode: the scaffold accepted a
   hand-written structural delegate type that real Prisma correctly rejects.
   Always treat CI's typecheck as authoritative.
+
+
+## Measured run for the 2026-10 lifecycle change
+
+Commands and results recorded on 2026-10-20 (Node v22.22.3, npm 10.9.8):
+
+| Command | Result |
+|---|---|
+| `npx prisma generate --no-engine` | ✅ generated (sandbox cannot download engines; `--no-engine` uses the bundled query compiler) |
+| `npx tsc --noEmit` | ✅ 0 errors |
+| `npx next lint --max-warnings=0` | ✅ 0 warnings/errors |
+| `npx vitest run` | ✅ **38 files passed, 1 skipped; 571 passed, 4 skipped (575 total)** |
+| `npm run schema:check` | ✅ tables/columns/indexes/unique constraints match (text comparison only) |
+| `npx vitest run --reporter=dot` (focused new files) | ✅ 138 new tests pass |
+| `npx next build` | ⚠️ blocked in the sandbox without a font mock; with `NEXT_FONT_GOOGLE_MOCKED_RESPONSES` + a dummy `DATABASE_URL` it **compiles successfully**. The committed `npm run build` still runs `prisma generate` (engine download), which cannot reach `binaries.prisma.sh` here. |
+| `npm audit --omit=dev --audit-level=high` | ✅ 0 vulnerabilities in production dependencies |
+| `npm audit --audit-level=high` | ⚠️ **7 high**, all dev-only transitive (`braces` via Tailwind 3/chokidar/micromatch and `eslint-config-next`/fast-glob). Fixing requires Tailwind 4, a breaking upgrade — intentionally not done. |
+
+Not run here (require infrastructure): real PostgreSQL migration replay/diff, real
+Supabase Storage upload/download, and live HTTP smoke tests against a migrated database.

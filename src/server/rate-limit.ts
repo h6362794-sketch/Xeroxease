@@ -162,6 +162,8 @@ export const RATE_LIMITS = {
   download: { limit: 120, windowMs: 10 * 60_000 },
   analyze: { limit: 60, windowMs: 10 * 60_000 },
   paymentSubmit: { limit: 10, windowMs: 10 * 60_000 },
+  paymentMethod: { limit: 20, windowMs: 10 * 60_000 },
+  adminSearch: { limit: 120, windowMs: 60_000 },
   feedback: { limit: 10, windowMs: 60 * 60_000 },
   admin: { limit: 120, windowMs: 60_000 },
   publicApi: { limit: 60, windowMs: 60_000 },

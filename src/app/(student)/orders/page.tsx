@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button, Card, EmptyState, Input, Select, Skeleton } from "@/components/ui";
 import { PaymentStatusBadge, StatusBadge } from "@/components/status-badge";
 import { api } from "@/lib/api-client";
-import { formatCurrencyINR, formatDateShort } from "@/lib/utils";
+import { formatCurrencyINR, formatDateShort, timeAgo } from "@/lib/utils";
 import { Search, Package } from "lucide-react";
 
 interface OrderRow {
@@ -19,6 +19,7 @@ interface OrderRow {
   colorMode: string;
   paperSize: string;
   createdAt: string;
+  updatedAt: string;
   feedback?: { id: string; rating: number } | null;
 }
 
@@ -67,12 +68,12 @@ export default function MyOrdersPage() {
         </div>
         <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label="Filter by status" className="sm:w-56">
           <option value="ALL">All statuses</option>
-          <option value="PAYMENT_PENDING">Payment pending</option>
-          <option value="PAYMENT_UNDER_REVIEW">Payment under review</option>
-          <option value="PAYMENT_CONFIRMED">Payment confirmed</option>
+          <option value="ORDER_RECEIVED">Order received</option>
+          <option value="ACCEPTED">Order accepted</option>
           <option value="PRINTING">Printing</option>
-          <option value="READY_FOR_COLLECTION">Ready for collection</option>
-          <option value="COMPLETED">Completed</option>
+          <option value="READY_FOR_PICKUP">Ready for pickup</option>
+          <option value="DELIVERED">Delivered</option>
+          <option value="REJECTED">Not accepted</option>
           <option value="CANCELLED">Cancelled</option>
         </Select>
       </div>
@@ -107,6 +108,7 @@ export default function MyOrdersPage() {
                     <p className="text-xs text-zinc-500 mt-1">
                       {formatDateShort(o.createdAt)} · {o.paperSize} · {o.colorMode === "COLOR" ? "Colour" : "B&W"} · {o.totalPages} pages · ×{o.copies}
                     </p>
+                    <p className="text-[11px] text-zinc-600 mt-0.5">Last updated {timeAgo(o.updatedAt)}</p>
                   </div>
                   <span className="font-bold text-white">{formatCurrencyINR(o.totalAmount)}</span>
                 </div>

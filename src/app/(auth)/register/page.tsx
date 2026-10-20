@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Button, Input, Label, FieldError, Select } from "@/components/ui";
+import { SupportContact } from "@/components/support-contact";
 import { api, ApiError } from "@/lib/api-client";
 
 const BRANCHES = ["CSE", "ECE", "EEE", "MECH", "CIVIL", "IT", "AI&DS", "Other"];
@@ -118,6 +119,10 @@ export default function RegisterPage() {
           Sign in
         </Link>
       </p>
+
+      <div className="mt-6 border-t border-white/10 pt-3 flex justify-center">
+        <SupportContact />
+      </div>
     </motion.div>
   );
 }

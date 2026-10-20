@@ -4,9 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { Card, EmptyState, Badge } from "@/components/ui";
 import { StatusBadge } from "@/components/status-badge";
 import { FilePlus2, ArrowRight, FileText, Coins } from "lucide-react";
-import { formatCurrencyINR, formatDateShort } from "@/lib/utils";
+import { formatCurrencyINR, formatDateShort, timeAgo } from "@/lib/utils";
 import { getRecoveryCodeStatus } from "@/server/recovery";
 import { ShieldAlert } from "lucide-react";
+import { SupportContact } from "@/components/support-contact";
+import { statusLabel } from "@/lib/order-status";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +45,10 @@ export default async function DashboardPage() {
           <FilePlus2 className="h-5 w-5" /> Create New Order
         </Link>
       </div>
+
+      {/* Top-of-dashboard support access. The number is public configuration,
+          never hard-coded, and renders no call link when unset. */}
+      <SupportContact variant="card" />
 
       {(!recovery.hasCode || recovery.usedAt) && (
         <Link
@@ -137,6 +143,7 @@ export default async function DashboardPage() {
                     <p className="text-xs text-zinc-500 mt-0.5">
                       {formatDateShort(o.createdAt)} · {o.totalPages} pages · {o.copies} cop{o.copies > 1 ? "ies" : "y"}
                     </p>
+                    <p className="text-[11px] text-zinc-600 mt-0.5">Updated {timeAgo(o.updatedAt)}</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-bold text-white">{formatCurrencyINR(Number(o.totalAmount))}</span>
@@ -147,7 +154,7 @@ export default async function DashboardPage() {
                           : "text-zinc-300 bg-white/5 border-white/10"
                       }
                     >
-                      {o.status.replaceAll("_", " ")}
+                      {statusLabel(o.status)}
                     </Badge>
                   </div>
                 </div>

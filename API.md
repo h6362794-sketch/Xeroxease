@@ -5,7 +5,7 @@ Errors: `{ "error": string, "code"?: string }` with appropriate HTTP status. Int
 
 **Authentication** uses an HTTP-only session cookie (`xe_session`) set by login endpoints. Roles are always derived server-side from the session.
 
-Rate limits (per IP, and per user where an identity is available; per user is used for upload/download buckets): login 10/5min · register 5/h · forgot 3/15min · upload 30/10min · upload intent 40/10min · upload complete 40/10min · download 120/10min · analyze 60/10min · payment submit 10/10min · feedback 10/h · order create 20/h · cancel 10/h · admin 120/min.
+Rate limits (per IP, and per user where an identity is available; per user is used for upload/download buckets): login 10/5min · register 5/h · forgot 3/15min · upload 30/10min · upload intent 40/10min · upload complete 40/10min · download 120/10min · analyze 60/10min · payment method 20/10min · payment submit 10/10min · feedback 10/h · order create 20/h · cancel 10/h · admin 120/min · admin order search 120/min.
 
 ---
 
@@ -29,10 +29,11 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 |---|---|---|---|---|
 | GET | `/orders` | STUDENT | `?q=&status=&page=&pageSize=` | Own orders only, paginated. |
 | POST | `/orders` | STUDENT | fileIds[], paperSize, colorMode (required), sides, copies, pageSelection, customPages?, finishing[] | **Server recalculates price** from verified page counts; client-supplied prices/status are ignored. `fileIds` must be 1–10 UUIDs of the caller's **verified** (`COMPLETED`) documents, else `422`/`403`/`409` before anything is written. Transactional. Returns `XE-…` order number. |
-| GET | `/orders/:id` | owner or ADMIN | — | Full detail incl. events, files, feedback. IDOR-guarded. |
-| POST | `/orders/:id/cancel` | owner | reason? | Server checks configured cancellable statuses. Transactional + audited. |
+| GET | `/orders/:id` | owner or ADMIN | — | Full detail incl. events, files, feedback, `payment`, `paymentControls` (`canSelectMethod`, `canSubmitUpi`, `blockedReason`, `paymentStage`) and `cancellation` (`allowed`, `explanation`). Foreign orders and missing orders both return 404. |
+| POST | `/orders/:id/cancel` | owner | reason? | **Pre-acceptance only.** `ORDER_RECEIVED` (and configured-narrowed legacy pre-acceptance states) can be cancelled; accepted/printing/ready orders return `409`. The guarded `UPDATE … WHERE status = <read>` means a simultaneous acceptance cannot produce an accepted + cancelled order: the loser gets `409`. Audited. |
+| POST | `/orders/:id/payment-method` | owner | `{ method: "CASH_ON_DELIVERY" \| "UPI" }` | Only after acceptance and only while unpaid. Selecting cash **never** marks the order paid. A repeated/conflicting choice returns `409`. |
 | POST | `/orders/:id/feedback` | owner | rating 1–5, comment? | Only after `COMPLETED`; one per order. |
-| GET | `/orders/:id/collection-token` | owner | — | Only when `READY_FOR_COLLECTION`; returns signed single-use token. |
+| GET | `/orders/:id/collection-token` | owner | — | Available at `READY_FOR_PICKUP` (and legacy `READY_FOR_COLLECTION`); returns the signed single-use token for the desk. |
 
 ## Files & documents
 
@@ -53,29 +54,64 @@ Rate limits (per IP, and per user where an identity is available; per user is us
 |---|---|---|---|---|
 | GET | `/payment/qr` | session | — | `{ enabled, qrUrl?, instructions, accountDisplay }`. |
 | GET | `/payment/qr/image` | session | — | Streams the private QR image. |
-| POST | `/payment/submit/:id` | owner | reference (UTR) | Moves to `PAYMENT_UNDER_REVIEW`. Duplicate/idempotent-safe. Notifies admins. **Does NOT confirm payment.** |
+| POST | `/payment/submit/:id` | owner | `{ reference }` | Only after acceptance with `UPI` selected. Normalises (trim/uppercase, 4–64 chars, `A-Z0-9._/-`) and moves to `PAYMENT_UNDER_REVIEW`; stores the reference + timestamp and notifies the desk. Duplicate/conflicting submissions return `409`. **Does NOT confirm payment.** |
 
 ## Admin
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/admin/orders` | ADMIN+ | `?q=&status=&paymentStatus=&sort=&dir=&page=` server-side pagination. |
-| PATCH | `/admin/orders/:id/status` | ADMIN+ | `{ status, note? }` — validates legal transitions; audited; generates collection token on READY. |
+| GET | `/admin/orders/lookup` | ADMIN+ | Dedicated search: `q` (order number/ID, student name/email/regNo, ≤100 chars), `status`, `paymentStatus`, `from`/`to` (`YYYY-MM-DD`, ≤730-day range), `page`, `pageSize` (≤50, default 20). Unknown enums/dates → `422`. Returns summary rows only; full detail needs the per-order route. |
+| GET | `/admin/orders/:id` | ADMIN+ | Full authorized record: student, print options, itemised pricing + `pricingSnapshot`, every file (page count + verified flag), status/payment history with actor names, `allowedNextStatuses`, `stageIndex`, cancellation explanation. Never returns `storageKey`, `collectionTokenHash` or password fields. |
+| PATCH | `/admin/orders/:id/status` | ADMIN+ | `{ status, note?, confirm? }` — server validates the edge, rejects repeats with `409`, requires a ≥3-char note for `REJECTED` and `confirm: true` for `DELIVERED`/`REJECTED` (`422` otherwise). Conditional update → concurrent writers get `409`. Audited; generates the collection token on READY. |
+| GET | `/admin/orders/:id/files/:fileId/download?mode=view\|download` | ADMIN+ | Order-scoped document access. Verifies admin role, file↔order association, order ownership and `COMPLETED` upload; every negative case is an identical `404 FILE_NOT_FOUND`. `supabase` → `307` to a short-lived signed URL; `local` → streamed bytes with `Content-Disposition` built from the stored filename. Storage/signing failures → `503`; never a storage key. |
 | PATCH | `/admin/orders/:id/files/:fileId/pagecount` | ADMIN+ | `{ pageCount }` — sets `ADMIN_VERIFIED`; audited. |
-| GET | `/admin/payments?state=` | ADMIN+ | Queue: PENDING_REVIEW / CONFIRMED / REJECTED. |
-| PATCH | `/admin/payments/:id/verify` | ADMIN+ | Marks `PAYMENT_CONFIRMED`; audited; notifies student. |
-| PATCH | `/admin/payments/:id/reject` | ADMIN+ | `{ note }` required; back to pending; audited. |
+| GET | `/admin/payments?state=` | ADMIN+ | Queue: `PENDING_REVIEW` (proof submitted/under review), `AWAITING_CASH`, `CONFIRMED`, `REJECTED`. Unknown state → `400` (previously returned every order). `pageSize` capped at 100. |
+| PATCH | `/admin/payments/:id/verify` | ADMIN+ | `{ note?, confirm: true }` — `confirm` is mandatory (`422`). Records method, actor, timestamp and amount; **does not move the printing status**. UPI requires a submitted reference; cash requires a selected cash method. Duplicate/racing confirmations → `409`. Audited + notifies the student. |
+| PATCH | `/admin/payments/:id/reject` | ADMIN+ | `{ reason }` (3–500 chars, `422` otherwise); only for submitted/under-review payments. Keeps the reference in history, tells the student why, allows a corrected resubmission. Audited. |
 | GET | `/admin/analytics` | ADMIN+ | Cards (revenue, pages today, ratings…), status distribution, recent feedback. |
 | GET | `/admin/feedback` | ADMIN+ | Ratings + distribution + list. |
 | PATCH | `/admin/feedback` | SUPER_ADMIN | `{ id, moderation: HIDDEN\|SHOWN }`; audited. |
 | GET | `/admin/users` | ADMIN+ | Search/filter/paginate. |
 | POST | `/admin/users` | SUPER_ADMIN | Provision ADMIN/SUPER_ADMIN (no public signup); audited. |
 | PATCH | `/admin/users/:id` | SUPER_ADMIN | `{ isActive }`; disabling revokes sessions; audited. |
-| GET/PATCH | `/admin/pricing` | ADMIN+ / SUPER_ADMIN | List rates / update rates; audited. |
+| GET/PATCH | `/admin/pricing` | ADMIN+ / SUPER_ADMIN | List active + inactive rates and the last 20 price-change audit rows / update rates. `PATCH` is SUPER_ADMIN only; `unitPrice` must be finite, 0–10000, ≤2 dp; unknown keys → `422`; duplicate keys → `422`; each key may appear once. The conditional write + audit row are one transaction, so a concurrent edit returns `409` and past orders are never touched. |
 | GET/POST/PATCH/DELETE | `/admin/payment-qr` | SUPER_ADMIN | Get config / upload image / enable-disable / remove; stored privately; audited. |
 | GET/PATCH | `/admin/settings` | SUPER_ADMIN | Instructions, retention, queue capacity; audited. |
 | GET | `/admin/audit-logs` | SUPER_ADMIN | Filter by action, search, paginate. |
 | POST | `/admin/collection` | ADMIN+ | `{ token, consume }` — verify or consume collection QR (consume completes the order). |
+
+### Lifecycle, payment and pricing semantics (2026-10)
+
+**Canonical status model** (one table: `src/lib/order-status.ts`):
+
+```
+ORDER_RECEIVED ──accept──▶ ACCEPTED ──▶ PRINTING ──▶ READY_FOR_PICKUP ──▶ DELIVERED
+       │                     │
+       └─reject / cancel     └─reject
+```
+
+`REJECTED` is an outcome, not a stage; the student timeline always shows five stages.
+`CANCELLED`, `DELIVERED`, `REJECTED` and all legacy terminal values are final. Legacy
+statuses (`ORDER_PLACED … COMPLETED`) remain readable and keep their old forward edges so
+historical orders can still be finished; **no stored status is rewritten**.
+
+**Payment is a separate axis.** Payment controls unlock only at `ACCEPTED`/`PRINTING`/
+`READY_FOR_PICKUP`; confirming money never advances the print lifecycle.
+
+| Payment state | Meaning |
+|---|---|
+| `PAYMENT_PENDING` | No reference submitted. Cash may be selected; still unpaid. |
+| `PAYMENT_UNDER_REVIEW` | Student submitted a UPI reference — a **claim**, not proof. |
+| `PAYMENT_CONFIRMED` | An administrator checked the money and recorded actor + timestamp. |
+| `PAYMENT_REJECTED` | Administrator rejected the claim with a reason; student may resubmit. |
+
+**Pricing history.** A new order stores `pricePerPage`, `finishingFee`, `totalAmount` and a
+full `pricingSnapshot` (price table + applied finishing) at creation. `/api/pricing` and
+`/api/admin/pricing` read the live table on every request, so new orders use new prices,
+but no code path recalculates or overwrites an existing order's total. A future repricing
+flow must be a separate, authorized, audited adjustment with a reason and a payment-
+difference calculation — never a silent overwrite.
 
 ## Public
 

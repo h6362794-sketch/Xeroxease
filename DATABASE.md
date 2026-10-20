@@ -30,7 +30,7 @@ Order 1─1 Feedback            (unique per order)
 | `sessions` | Server-side sessions | `token_hash` (unique), `kind`, `expires_at`, `revoked_at` |
 | `recovery_codes` | Email-free account recovery | `user_id` (unique — one live code per account), `code_hash` (unique), `created_by` (null = self, else admin id), `expires_at` (null for self-issued), `used_at` |
 | `password_reset_tokens` | **DEPRECATED** — backed the removed email-link reset; no longer read or written | `token_hash`, `expires_at`, `used_at` |
-| `orders` | Print orders | `order_number` (unique `XE-YYYY-NNNNNN`), print config, **server-verified** `total_pages` / `billable_pages` / `total_amount`, `status`, `payment_status`, `collection_token_hash`, `collection_token_used_at` |
+| `orders` | Print orders | `order_number` (unique `XE-YYYY-NNNNNN`), print config, **server-verified** `total_pages` / `billable_pages` / `total_amount`, `status`, `payment_status`, `payment_method`, `payment_ref` / `payment_proof_at` / `payment_verified_by` / `payment_verified_at` / `payment_note`, lifecycle timestamps (`accepted_*`, `rejected_*`, `rejection_reason`, `delivered_at`), `pricing_snapshot` (JSONB), `finishing_options` (TEXT[]), `collection_token_hash`, `collection_token_used_at` |
 | `uploaded_files` | Document metadata | `storage_key` (unique), `original_name`, `mime_type`, `size_bytes`, `page_count`, `page_count_source`, `analysis_status`, `analyzed_at` |
 | `order_events` | Immutable status timeline | `type`, `from_status`, `to_status`, `actor_id`, `actor_role` |
 | `payment_events` | Payment audit trail | `type` (SUBMITTED/VERIFIED/REJECTED), `reference`, `amount`, `note` |
@@ -43,7 +43,8 @@ Order 1─1 Feedback            (unique per order)
 ## Enums
 
 - **Role**: `STUDENT` · `ADMIN` · `SUPER_ADMIN`
-- **OrderStatus**: `ORDER_PLACED` → `PAYMENT_PENDING` → `PAYMENT_UNDER_REVIEW` → `PAYMENT_CONFIRMED` → `DOCUMENTS_RECEIVED` → `PROCESSING` → `PRINTING` → `QUALITY_CHECK` → `READY_FOR_COLLECTION` → `COMPLETED` (plus `CANCELLED`, `FAILED`); transitions validated server-side (`ORDER_TRANSITIONS` in `src/lib/constants.ts`)
+- **OrderStatus**: canonical lifecycle `ORDER_RECEIVED` → `ACCEPTED` → `PRINTING` → `READY_FOR_PICKUP` → `DELIVERED`, with `REJECTED` as a terminal outcome and `CANCELLED`/`FAILED` terminals. Legacy values (`ORDER_PLACED`, `PAYMENT_PENDING`, `PAYMENT_UNDER_REVIEW`, `PAYMENT_CONFIRMED`, `DOCUMENTS_RECEIVED`, `PROCESSING`, `QUALITY_CHECK`, `READY_FOR_COLLECTION`, `COMPLETED`) remain in the enum and keep their historical transitions so old rows continue to work. Transitions are validated server-side by `src/lib/order-status.ts`; **values are append-only** and no stored status is rewritten.
+- **PaymentMethod**: `CASH_ON_DELIVERY` · `UPI` (nullable — no choice yet).
 - **PaymentStatus**: `PAYMENT_PENDING` · `PAYMENT_PROOF_SUBMITTED` · `PAYMENT_UNDER_REVIEW` · `PAYMENT_CONFIRMED` · `PAYMENT_REJECTED` · `PAYMENT_FAILED`
 - **PageCountSource**: `DOCUMENT_PARSER` · `AI_ANALYSIS` · `ADMIN_VERIFIED` · `USER_CONFIRMED`
 - **AnalysisStatus**: `PENDING` · `PROCESSING` · `COMPLETED` · `FAILED` · `NEEDS_REVIEW`
@@ -52,7 +53,7 @@ Order 1─1 Feedback            (unique per order)
 
 - **Foreign keys** with `ON DELETE CASCADE` for owned records (sessions, files, events, feedback, notifications)
 - **Unique constraints**: email, phone, reg no, order number, storage key, session token hash, one feedback per order, one recovery code per user (`recovery_codes.user_id`)
-- **Indexes** on: `orders(userId, status)`, `orders(status)`, `orders(paymentStatus)`, `orders(createdAt)`, `orders(orderNumber)`, `sessions(userId, expiresAt)`, `notifications(userId, isRead)`, `audit_logs(action, createdAt)`, and more
+- **Indexes** on: `orders(userId, status)`, `orders(status)`, `orders(paymentStatus)`, `orders(paymentMethod, paymentStatus)` (payment-desk queue), `orders(createdAt)`, `orders(orderNumber)`, `sessions(userId, expiresAt)`, `notifications(userId, isRead)`, `audit_logs(action, createdAt)`, and more
 - **Transactions** (`prisma.$transaction`) for order creation, status changes, payment verification/rejection, cancellation, recovery-code redemption — no partially-created orders
 
 ## Migrations
@@ -81,6 +82,30 @@ npx prisma migrate status     # should report: Database schema is up to date
 ### Initial migration
 
 `prisma/migrations/20261013000000_init/migration.sql` creates every table, enum, index and foreign key declared in `prisma/schema.prisma`.
+
+### Order lifecycle, payments and pricing (2026-10) — **not yet applied**
+
+Two additive migrations must be deployed in this order:
+
+1. `20261020000000_order_lifecycle_enum_values` — appends `ORDER_RECEIVED`, `ACCEPTED`,
+   `READY_FOR_PICKUP`, `DELIVERED`, `REJECTED` to `OrderStatus`, and `ORDER_REJECTED`,
+   `ORDER_ACCEPTED` to `NotificationType`.
+2. `20261020000100_order_lifecycle_payments_pricing` — sets the `orders.status` default
+   to `ORDER_RECEIVED`, creates the `PaymentMethod` enum, adds `payment_method`,
+   `accepted_at/by`, `rejected_at/by`, `rejection_reason`, `delivered_at`,
+   `pricing_snapshot`, `finishing_options`, and the `orders(payment_method,
+   payment_status)` index.
+
+They are split deliberately: PostgreSQL allows `ALTER TYPE … ADD VALUE` in a
+transaction but forbids **using** a new enum value until that transaction commits, so
+the default change cannot share a migration with the enum additions.
+
+**Impact / safety:** no columns or enum values are removed, no row is rewritten, and all
+new columns are nullable or have a default. Existing orders keep their stored status.
+The application code in this branch reads the new columns, so the migrations must be
+applied before deploying it. **Do not apply to production without explicit operator
+approval.** After applying, verify with `prisma migrate status` and the CI
+`migrations` job (`prisma migrate diff --from-migrations … --exit-code`).
 
 ### Rollback planning
 

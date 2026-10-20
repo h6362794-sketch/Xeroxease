@@ -25,54 +25,32 @@ export type ColorMode = (typeof COLOR_MODES)[number];
 export type PrintSide = (typeof PRINT_SIDES)[number];
 export type FinishingOption = (typeof FINISHING_OPTIONS)[number];
 
-// Legal status transitions for OrderStatus (server-enforced)
-export const ORDER_TRANSITIONS: Record<string, string[]> = {
-  ORDER_PLACED: ["PAYMENT_PENDING", "PAYMENT_UNDER_REVIEW", "PAYMENT_CONFIRMED", "CANCELLED", "FAILED"],
-  PAYMENT_PENDING: ["PAYMENT_UNDER_REVIEW", "PAYMENT_CONFIRMED", "CANCELLED", "FAILED"],
-  PAYMENT_UNDER_REVIEW: ["PAYMENT_CONFIRMED", "PAYMENT_PENDING", "CANCELLED", "FAILED"],
-  PAYMENT_CONFIRMED: ["DOCUMENTS_RECEIVED", "PROCESSING", "PRINTING", "CANCELLED", "FAILED"],
-  DOCUMENTS_RECEIVED: ["PROCESSING", "PRINTING", "CANCELLED", "FAILED"],
-  PROCESSING: ["PRINTING", "QUALITY_CHECK", "CANCELLED", "FAILED"],
-  PRINTING: ["QUALITY_CHECK", "READY_FOR_COLLECTION", "FAILED"],
-  QUALITY_CHECK: ["READY_FOR_COLLECTION", "FAILED"],
-  READY_FOR_COLLECTION: ["COMPLETED", "FAILED"],
-  COMPLETED: [],
-  CANCELLED: [],
-  FAILED: [],
-};
+// The authoritative order-status model lives in `./order-status` so the API,
+// admin portal and student portal cannot drift apart. Re-exported here for the
+// many existing imports of `@/lib/constants`.
+export {
+  ORDER_TRANSITIONS,
+  CANCELLABLE_STATUSES,
+  ORDER_STATUS_VALUES,
+  STUDENT_STAGES,
+} from "./order-status";
 
-export const CANCELLABLE_STATUSES = [
-  "ORDER_PLACED",
-  "PAYMENT_PENDING",
-  "PAYMENT_UNDER_REVIEW",
-  "PAYMENT_CONFIRMED",
-  "DOCUMENTS_RECEIVED",
-  "PROCESSING",
-] as const;
+import { ORDER_STATUS_VALUES } from "./order-status";
 
-export const PUBLIC_STATUSES = [
-  "ORDER_PLACED",
-  "PAYMENT_PENDING",
-  "PAYMENT_UNDER_REVIEW",
-  "PAYMENT_CONFIRMED",
-  "DOCUMENTS_RECEIVED",
-  "PROCESSING",
-  "PRINTING",
-  "QUALITY_CHECK",
-  "READY_FOR_COLLECTION",
-  "COMPLETED",
-  "CANCELLED",
-  "FAILED",
-] as const;
+/** Every status the admin status endpoint accepts (canonical + legacy). */
+export const PUBLIC_STATUSES = ORDER_STATUS_VALUES;
 
+/** Visible timeline stages (canonical names; the timeline component maps legacy). */
 export const TRACKING_STEPS = [
-  "ORDER_PLACED",
-  "PAYMENT_CONFIRMED",
-  "DOCUMENTS_RECEIVED",
+  "ORDER_RECEIVED",
+  "ACCEPTED",
   "PRINTING",
-  "QUALITY_CHECK",
-  "READY_FOR_COLLECTION",
-  "COMPLETED",
+  "READY_FOR_PICKUP",
+  "DELIVERED",
 ] as const;
+
+/** Payment choices, validated server-side. */
+export const PAYMENT_METHODS = ["CASH_ON_DELIVERY", "UPI"] as const;
+export type PaymentMethodValue = (typeof PAYMENT_METHODS)[number];
 
 export const RETENTION_DAYS_DEFAULT = 30;

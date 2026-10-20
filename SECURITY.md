@@ -53,8 +53,9 @@ Security is a first-class requirement, prioritized above visual effects and conv
 
 - Roles: `STUDENT` < `ADMIN` < `SUPER_ADMIN`, stored server-side, resolved from the session on every request.
 - Students: own orders/files/invoices/feedback/notifications only.
-- Admins: order management, payment verification, file access for fulfillment, analytics.
-- Super Admin: pricing, settings, payment QR, user provisioning/disable, feedback moderation, audit logs.
+- Admins: order management/search, payment verification, order-scoped document access for fulfillment, analytics.
+- Super Admin: pricing writes, settings, payment QR, user provisioning/disable, feedback moderation, audit logs.
+- **Order documents are authorized per (order, file) pair**, not per file id: admin role + the file is attached to that order + it was uploaded by that order's student + the upload is `COMPLETED`. Every negative case returns the same 404, so ids cannot be probed. See `src/lib/order-file-access.ts` and §14.
 - Route guards live in **server layouts** (redirect) **and** every API handler (401/403) — the client is never trusted.
 
 ## 4. File security model
@@ -136,8 +137,34 @@ stored or embedded (see `UPLOADS.md` §3).
 - The QR image is a **display asset only**; scanning it does not confirm anything.
 - Payment states advance only through authorized flows: student submits a reference → admin verifies/rejects. Students can never self-confirm.
 - All payment-state changes are transactional, transition-validated, and audited (`payment_events` + `audit_logs`).
-- Anti-abuse: duplicate-submission protection, reference validation, per-IP limits, last-4-only in logs.
+- Anti-abuse: duplicate-submission protection, reference validation (4–64 chars, `A-Z0-9._/-`), per-user rate limits (method 20/10 min, submit 10/10 min), last-4-only in logs/audit metadata.
+- **Cash is never payment by itself.** Selecting `CASH_ON_DELIVERY` stores a preference and leaves `PAYMENT_PENDING`; only an admin "mark cash received" action records `PAYMENT_CONFIRMED`.
+- **A UPI reference is a claim, not proof.** Submitting one moves the payment to `PAYMENT_UNDER_REVIEW`; it never reaches `PAYMENT_CONFIRMED` automatically.
+- Verification requires `confirm: true`, an eligible order stage, a selected method and (for UPI) a stored reference. Duplicate or racing decisions are refused with `409` by a conditional `updateMany` that re-checks payment state (and order stage) in the same statement.
+- Payment changes never move `orders.status`; printing and money remain separate axes.
 - If a real payment provider is added later, plug it in at the verify step — the order model does not need redesign.
+
+## 6.1 Order lifecycle and pricing authorization (2026-10)
+
+- **One transition table** (`src/lib/order-status.ts`) is used by the API, admin UI and
+  student timeline. The server — never the browser — decides whether an edge is legal.
+- Only `ADMIN`/`SUPER_ADMIN` can move an order. Students can cancel **only before
+  acceptance**; the cancellation `UPDATE … WHERE status = <read>` is race-safe, so a
+  concurrent acceptance leaves exactly one winner (`409` for the loser).
+- `DELIVERED` and `REJECTED` require explicit confirmation; rejection also requires a
+  written reason. `DELIVERED`/`REJECTED`/`CANCELLED`/legacy terminals accept no further
+  transition (repeat → `409`).
+- Status history is append-only (`order_events` + `payment_events`), preserved after
+  completion or rejection, and includes actor id/role and timestamp.
+- **Pricing writes are SUPER_ADMIN only** and transactionally audit `previous → new` per
+  key. Each update is conditional on the previous value; a concurrent edit returns `409`
+  instead of silently overwriting. Order totals are snapshotted at creation
+  (`pricing_snapshot`), so changing the price list never changes an existing order.
+- The public `/api/pricing` and `getPriceTable()` read the live active rows on every
+  request (no stale cache); inactive rows are never used for new orders.
+- Helpline configuration is **public, non-secret** (`NEXT_PUBLIC_SUPPORT_PHONE`) and empty
+  by default. There is no hard-coded number; malformed/absent values render plain text
+  instead of a `tel:` link. Never put PII in the variable.
 
 ## 7. Secrets management
 
@@ -466,3 +493,36 @@ in `STORAGE_PROVIDER_MAX_FILE_BYTES`. (2) Schedule `POST /api/admin/uploads/swee
 else reaps abandoned intents. (3) Confirm public access on the bucket stays off
 (the bucket must remain private — `UPLOADS.md` §4 and check 1 of §8.1). (4) Re-run the `UPLOADS.md` §8.1 manual checks after any
 Supabase plan change. See `DEPLOYMENT.md` §1a and `UPLOADS.md`.
+
+
+## 15. Admin document access and order detail (2026-10)
+
+New/changed routes carry the same boundary as the rest of the app: authentication,
+explicit role authorization, zod validation, server-derived ownership and transactional
+state changes. Client-side hiding is never the boundary.
+
+| Route | Guard |
+|---|---|
+| `GET /api/admin/orders/:id` | `ADMIN`/`SUPER_ADMIN`; returns one order only; strips storage keys, collection-token hashes and password fields; actors resolved by id. |
+| `GET /api/admin/orders/lookup` | `ADMIN`/`SUPER_ADMIN`; validated query (≤100 chars, known enums, real `YYYY-MM-DD` calendar dates, ≤730-day range), bounded page size; summary rows only. |
+| `GET /api/admin/orders/:id/files/:fileId/download` | Role + file↔order + uploader↔order owner + `COMPLETED` + storage key. Identical 404 for every negative, rate limited, short-lived signed URL or streamed bytes, `Content-Disposition` sanitised (CR/LF/quotes/path characters stripped, RFC 5987 `filename*`). Storage failure → generic `503`, never a key. |
+| `PATCH /api/admin/orders/:id/status` | Role + legal edge + confirmation/reason + conditional update; repeat → `409`; audited notification and history. |
+| `PATCH /api/admin/payments/:id/verify\|reject` | Role + explicit confirmation + payment state + order stage; conditional update; audited; student never reaches either route. |
+| `POST /api/orders/:id/payment-method` | Owner + accepted order + unpaid + no conflicting state. |
+| `POST /api/payment/submit/:id` | Owner + accepted order + `UPI` selected + validated reference; stores a claim only. |
+| `PATCH /api/admin/pricing` | `SUPER_ADMIN` + bounded numeric validation + conditional write + audit in the same transaction. |
+
+**IDOR/mass-assignment:** no route accepts `userId`, `orderId`, `totalAmount`, page
+counts, payment status, storage keys or role from the body. Those are read from the
+session/database. File ids are always re-associated with the order; an admin cannot use
+`fileId` from another order.
+
+**Race/duplicate protection:** status/cancel/payment writes are `updateMany` with the
+observed state in the `WHERE`; a zero count becomes `409`. Pricing writes are conditional
+on the previous value. Collection-token consumption is guarded by
+`collection_token_used_at IS NULL`.
+
+**Logging:** audit metadata records order numbers, last four characters of a UPI
+reference, amounts and reasons — never full references, tokens, storage keys or signed
+URLs. Negative document lookups log the order/file id and actor id at `warn`, not the
+filename or bytes.

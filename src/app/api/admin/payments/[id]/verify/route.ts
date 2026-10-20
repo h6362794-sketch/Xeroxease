@@ -1,73 +1,41 @@
-import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/server/auth";
-import { apiError, parseBody, withErrorHandling } from "@/server/api-utils";
-import { z } from "zod";
-import { audit } from "@/server/audit";
-import { NOTIFY } from "@/server/notifications";
+import { apiError, enforceRateLimit, json, parseBody, withErrorHandling } from "@/server/api-utils";
+import { RATE_LIMITS } from "@/server/rate-limit";
+import { paymentDecisionSchema } from "@/server/validation";
+import { verifyPayment } from "@/server/payments";
 
-const schema = z.object({ note: z.string().trim().max(500).optional().or(z.literal("")) });
-
+/**
+ * PATCH /api/admin/payments/:orderId/verify
+ *
+ * Marks money as received after a human check. Works for cash-at-pickup and for a
+ * manually verified UPI reference. The printing lifecycle is deliberately NOT
+ * advanced here, and students can never reach this route.
+ */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withErrorHandling(async () => {
     const user = await requireRole("ADMIN", "SUPER_ADMIN");
+    const limited = await enforceRateLimit(req, RATE_LIMITS.admin, "admin-payment-verify", user.id);
+    if (limited) return limited;
+
     const { id } = await params;
     if (!/^[0-9a-f-]{36}$/i.test(id)) return apiError("Invalid order id.", 400);
-    const data = await parseBody(req, schema);
 
-    const order = await prisma.order.findUnique({ where: { id } });
-    if (!order) return apiError("Order not found.", 404);
-    if (order.paymentStatus === "PAYMENT_CONFIRMED") {
-      return Response.json({ ok: true, idempotent: true });
+    const data = await parseBody(req, paymentDecisionSchema);
+    if (data.confirm !== true) {
+      return apiError(
+        "Confirm that you have checked the payment before marking it received.",
+        422,
+        "CONFIRMATION_REQUIRED"
+      );
     }
-    if (!["PAYMENT_PROOF_SUBMITTED", "PAYMENT_UNDER_REVIEW"].includes(order.paymentStatus)) {
-      return apiError("Payment is not in a verifiable state.", 409);
-    }
-
-    await prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: order.id },
-        data: {
-          paymentStatus: "PAYMENT_CONFIRMED",
-          status: "PAYMENT_CONFIRMED",
-          paymentVerifiedBy: user.id,
-          paymentVerifiedAt: new Date(),
-          paymentNote: data.note || null,
-        },
-      });
-      await tx.paymentEvent.create({
-        data: {
-          orderId: order.id,
-          actorId: user.id,
-          actorRole: user.role,
-          type: "VERIFIED",
-          amount: order.totalAmount,
-          reference: order.paymentRef,
-          note: data.note || null,
-        },
-      });
-      await tx.orderEvent.create({
-        data: {
-          orderId: order.id,
-          type: "PAYMENT_VERIFIED",
-          fromStatus: order.status,
-          toStatus: "PAYMENT_CONFIRMED",
-          actorId: user.id,
-          actorRole: user.role,
-        },
-      });
-    });
-
-    await NOTIFY.paymentConfirmed(order.userId, order.orderNumber, order.id);
-    await audit({
+    await verifyPayment({
+      orderId: id,
       actorId: user.id,
       actorRole: user.role,
-      action: "PAYMENT_VERIFIED",
-      targetType: "ORDER",
-      targetId: order.id,
-      metadata: { orderNumber: order.orderNumber },
+      note: data.note || undefined,
     });
 
-    return Response.json({ ok: true });
+    return json({ ok: true, paymentStatus: "PAYMENT_CONFIRMED" });
   });
 }
 

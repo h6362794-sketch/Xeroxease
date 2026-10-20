@@ -10,10 +10,24 @@ describe("order status machine", () => {
     expect(isTransitionAllowed("PAYMENT_CONFIRMED", "PRINTING")).toBe(true);
   });
 
-  it("allows fulfillment flow", () => {
+  it("allows the canonical fulfillment flow", () => {
+    expect(isTransitionAllowed("ORDER_RECEIVED", "ACCEPTED")).toBe(true);
+    expect(isTransitionAllowed("ACCEPTED", "PRINTING")).toBe(true);
+    expect(isTransitionAllowed("PRINTING", "READY_FOR_PICKUP")).toBe(true);
+    expect(isTransitionAllowed("READY_FOR_PICKUP", "DELIVERED")).toBe(true);
+  });
+
+  it("keeps the legacy fulfillment path working for historical orders", () => {
     expect(isTransitionAllowed("PRINTING", "QUALITY_CHECK")).toBe(true);
     expect(isTransitionAllowed("QUALITY_CHECK", "READY_FOR_COLLECTION")).toBe(true);
     expect(isTransitionAllowed("READY_FOR_COLLECTION", "COMPLETED")).toBe(true);
+  });
+
+  it("treats rejection as an outcome, not a progress step", () => {
+    expect(isTransitionAllowed("ORDER_RECEIVED", "REJECTED")).toBe(true);
+    expect(isTransitionAllowed("ACCEPTED", "REJECTED")).toBe(true);
+    expect(isTransitionAllowed("REJECTED", "ACCEPTED")).toBe(false);
+    expect(isTransitionAllowed("DELIVERED", "REJECTED")).toBe(false);
   });
 
   it("rejects skipping stages", () => {
@@ -41,12 +55,17 @@ describe("order status machine", () => {
 });
 
 describe("cancellation rules", () => {
-  it("cancellable before printing", () => {
+  it("is cancellable only before acceptance", () => {
+    expect(CANCELLABLE_STATUSES).toContain("ORDER_RECEIVED");
+    // Legacy pre-acceptance states stay cancellable for historical orders.
     expect(CANCELLABLE_STATUSES).toContain("PAYMENT_PENDING");
-    expect(CANCELLABLE_STATUSES).toContain("PROCESSING");
+    expect(CANCELLABLE_STATUSES).toContain("PAYMENT_UNDER_REVIEW");
   });
-  it("not cancellable once printing or beyond", () => {
+
+  it("is not cancellable once accepted, printing or beyond", () => {
+    expect(CANCELLABLE_STATUSES).not.toContain("ACCEPTED");
     expect(CANCELLABLE_STATUSES).not.toContain("PRINTING");
+    expect(CANCELLABLE_STATUSES).not.toContain("PROCESSING");
     expect(CANCELLABLE_STATUSES).not.toContain("READY_FOR_COLLECTION");
     expect(CANCELLABLE_STATUSES).not.toContain("COMPLETED");
   });

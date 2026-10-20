@@ -26,6 +26,8 @@ const STATUS_LABELS: Record<string, string> = {
   PAYMENT_CONFIRMED: "Confirmed", DOCUMENTS_RECEIVED: "Docs Received", PROCESSING: "Processing",
   PRINTING: "Printing", QUALITY_CHECK: "Quality", READY_FOR_COLLECTION: "Ready", COMPLETED: "Completed",
   CANCELLED: "Cancelled", FAILED: "Failed",
+  ORDER_RECEIVED: "Received", ACCEPTED: "Accepted", READY_FOR_PICKUP: "Ready pickup",
+  DELIVERED: "Delivered", REJECTED: "Rejected",
 };
 
 export function AdminDashboard({ role }: { role: string }) {
@@ -59,7 +61,7 @@ export function AdminDashboard({ role }: { role: string }) {
     { label: "Payments under review", value: c.underReviewPayments, icon: Clock3, href: "/admin/payments" },
     { label: "Processing", value: c.processingOrders, icon: Loader2, href: "/admin/orders" },
     { label: "Printing", value: c.printingOrders, icon: Printer, href: "/admin/orders" },
-    { label: "Ready for collection", value: c.readyOrders, icon: PackageCheck, href: "/admin/orders" },
+    { label: "Ready for pickup", value: c.readyOrders, icon: PackageCheck, href: "/admin/orders" },
     { label: "Pages today", value: c.pagesToday, icon: FileText, href: "/admin/orders" },
     { label: "Completed", value: c.completedOrders, icon: CheckCircle2, href: "/admin/orders" },
     { label: "Cancelled", value: c.cancelledOrders, icon: XCircle, href: "/admin/orders" },
