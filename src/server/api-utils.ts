@@ -13,11 +13,103 @@ export function apiError(message: string, status = 400, code?: string) {
 }
 
 const GENERIC_ERROR = "Something went wrong. Please try again.";
+const TRANSIENT_ERROR = "Service temporarily unavailable. Please try again in a moment.";
+const CONFIG_ERROR_MSG = "Service configuration error. Please contact support.";
 
 /** Errors the application raises deliberately; `status` is trusted for 4xx only. */
 interface HttpErrorLike {
   status?: number;
   message?: string;
+  code?: string;
+}
+
+/**
+ * Prisma / driver error codes that are transient and should map to 503
+ * rather than a generic 500, so the UI can retry and operators see
+ * a clear category.
+ *
+ * - P1001: Can't reach database server
+ * - P1002: Database server reached but timed out
+ * - P1008: Operations timed out
+ * - P1009: Database already exists (rare, but transient in pooling)
+ * - P1010: User denied access (often transient misconfig, treat as 503 to avoid leaking)
+ * - P1013: Database URL invalid (config)
+ * - P1017: Server closed connection
+ * - P2024: Timed out fetching connection from pool (connection_limit=1 on concurrent routes)
+ * - P2037: Too many database connections opened
+ */
+const TRANSIENT_PRISMA_CODES = new Set([
+  "P1000",
+  "P1001",
+  "P1002",
+  "P1008",
+  "P1017",
+  "P2024",
+  "P2037",
+  "P1013",
+]);
+
+const CONFIG_KEYWORDS = [
+  "Missing required environment variable",
+  "SESSION_SECRET must be",
+  "DATABASE_URL is not set",
+  "DATABASE_URL is invalid",
+];
+
+function getPrismaCode(err: unknown): string | undefined {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const c = (err as { code?: unknown }).code;
+    if (typeof c === "string" && /^P\d{4}$/.test(c)) return c;
+  }
+  return undefined;
+}
+
+function isTransientError(err: unknown): boolean {
+  const code = getPrismaCode(err);
+  if (code && TRANSIENT_PRISMA_CODES.has(code)) return true;
+  // Also handle generic network / driver errors that Prisma may wrap
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    if (
+      msg.includes("can't reach database") ||
+      msg.includes("timed out fetching a new connection") ||
+      msg.includes("connection pool") ||
+      msg.includes("econnrefused") ||
+      msg.includes("etimedout") ||
+      msg.includes("enotfound") ||
+      msg.includes("connection terminated") ||
+      msg.includes("too many clients") ||
+      msg.includes("too many connections")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isConfigError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message;
+    return CONFIG_KEYWORDS.some((k) => msg.includes(k));
+  }
+  return false;
+}
+
+function isSchemaSkewLike(err: unknown): boolean {
+  const code = getPrismaCode(err);
+  if (code === "P2021" || code === "P2022") return true;
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    if (
+      msg.includes("does not exist in the current database") ||
+      msg.includes("column") && msg.includes("does not exist") ||
+      msg.includes("relation") && msg.includes("does not exist") ||
+      msg.includes('type "') && msg.includes("does not exist")
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -27,6 +119,12 @@ interface HttpErrorLike {
  * ownership, state-machine conflicts) is surfaced with its real message so the UI
  * can act on it. 5xx and unexpected errors are replaced with a generic message and
  * logged server-side under a correlation id.
+ *
+ * Enhancements for login 500 fix:
+ * - Prisma transient codes (P1001, P2024 pool timeout, etc.) → 503 with Retry-After
+ * - Schema-skew (missing column/table) → 503 with operator guidance
+ * - Config errors (missing DATABASE_URL/SESSION_SECRET) → 500 with CONFIG_ERROR code
+ * - Generic unexpected → 500 with correlation id
  */
 export function withErrorHandling(handler: () => Promise<Response>): Promise<Response> {
   return handler().catch((err: unknown) => {
@@ -49,9 +147,48 @@ export function withErrorHandling(handler: () => Promise<Response>): Promise<Res
       return apiError(message, status);
     }
 
+    // 503 for transient DB / pool issues — UI can retry without counting as credential failure
+    if (isTransientError(err)) {
+      const id = randomUUID();
+      console.error("[api][transient]", { requestId: id, code: getPrismaCode(err) }, err);
+      const res = NextResponse.json(
+        { error: TRANSIENT_ERROR, code: "SERVICE_UNAVAILABLE", requestId: id },
+        { status: 503, headers: { "Retry-After": "5", "x-request-id": id } }
+      );
+      return res;
+    }
+
+    if (isSchemaSkewLike(err)) {
+      const id = randomUUID();
+      console.error("[api][schema-skew]", { requestId: id, code: getPrismaCode(err) }, err);
+      const res = NextResponse.json(
+        {
+          error: "Service is updating. Please try again in a moment.",
+          code: "SCHEMA_OUTDATED",
+          requestId: id,
+        },
+        { status: 503, headers: { "Retry-After": "10", "x-request-id": id } }
+      );
+      return res;
+    }
+
+    if (isConfigError(err)) {
+      const id = randomUUID();
+      console.error("[api][config]", { requestId: id }, err);
+      const res = NextResponse.json(
+        { error: CONFIG_ERROR_MSG, code: "CONFIG_ERROR", requestId: id },
+        { status: 500, headers: { "x-request-id": id } }
+      );
+      return res;
+    }
+
     const id = randomUUID();
     console.error("[api]", { requestId: id }, err);
-    return apiError(GENERIC_ERROR, 500, "INTERNAL_ERROR");
+    const res = NextResponse.json(
+      { error: GENERIC_ERROR, code: "INTERNAL_ERROR", requestId: id },
+      { status: 500, headers: { "x-request-id": id } }
+    );
+    return res;
   });
 }
 
@@ -66,7 +203,16 @@ export function withErrorHandling(handler: () => Promise<Response>): Promise<Res
  * all, which is the correct setting when the app is directly exposed.
  */
 export function getClientIp(req: Request): string {
-  const hops = env.TRUSTED_PROXY_COUNT;
+  let hops: number;
+  try {
+    hops = env.TRUSTED_PROXY_COUNT;
+  } catch {
+    // Env misconfiguration (e.g. non-numeric TRUSTED_PROXY_COUNT) used to
+    // throw and crash the entire login handler as 500. Fall back to unknown
+    // so the login can still proceed and the misconfig is visible in logs.
+    console.warn("[api] TRUSTED_PROXY_COUNT misconfigured; using unknown IP.");
+    return "unknown";
+  }
   if (hops === 0) return "unknown";
 
   const fwd = req.headers.get("x-forwarded-for");
@@ -98,9 +244,23 @@ export async function enforceRateLimit(
   scope: string,
   identity?: string
 ): Promise<NextResponse | null> {
-  const ip = getClientIp(req);
+  let ip: string;
+  try {
+    ip = getClientIp(req);
+  } catch {
+    ip = "unknown";
+  }
   const key = identity ? `${scope}:${identity}:${ip}` : `${scope}:${ip}`;
-  const r = await rateLimitAsync(key, bucket.limit, bucket.windowMs);
+  let r: { ok: boolean; remaining: number; retryAfterSec: number };
+  try {
+    r = await rateLimitAsync(key, bucket.limit, bucket.windowMs);
+  } catch (err) {
+    // Rate limiter failure must never become a login 500. Fail closed in
+    // production would previously return 429 for every login if redis was
+    // misconfigured; fail open is safer for availability. Log and allow.
+    console.error("[rate-limit] enforce failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
   if (!r.ok) {
     return NextResponse.json(
       { error: `Too many requests. Please try again in ${r.retryAfterSec}s.` },

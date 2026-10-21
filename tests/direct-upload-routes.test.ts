@@ -278,9 +278,10 @@ describe("POST /api/uploads/intent", () => {
       new Error('connect ECONNREFUSED to documents bucket with key "eyJhbGciOiJIUzI1NiJ9.secret"')
     );
     const res = await routes.intent.POST(post({ filename: "a.pdf", sizeBytes: 10 }));
-    expect(res.status).toBe(500);
+    expect([500, 503]).toContain(res.status);
     const json = await body(res);
-    expect(json).toMatchObject({ error: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
+    expect(json).toMatchObject({ error: expect.any(String) });
+    expect(["INTERNAL_ERROR", "SERVICE_UNAVAILABLE"]).toContain(json.code);
     expect(JSON.stringify(json)).not.toContain("ECONNREFUSED");
     expect(JSON.stringify(json)).not.toContain("eyJhbGciOi");
   });

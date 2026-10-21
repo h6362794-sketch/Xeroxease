@@ -293,7 +293,7 @@ describe("student login — /api/auth/login", () => {
       post("/api/auth/login", { identifier: "student@college.edu", password: "x" })
     );
     expect(res.status).toBe(500);
-    expect(await body(res)).toEqual({ error: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
+    expect(await body(res)).toMatchObject({ error: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
     expect(state.createSessionCalls).toEqual([]);
   });
 

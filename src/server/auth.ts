@@ -50,12 +50,27 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
   try {
     if (hash.startsWith("$argon2")) {
       const argon2 = await getArgon2();
-      if (!argon2) return false;
+      if (!argon2) {
+        // Do not silently return false — that would lock correct users out
+        // and increment the brute-force counter for every login attempt
+        // while argon2 is unavailable. Instead surface a transient error
+        // so withErrorHandling can return 503 and the UI can retry.
+        console.error("[auth] argon2 hash cannot be verified: argon2 module unavailable");
+        throw Object.assign(new Error("Authentication service temporarily unavailable"), {
+          status: 503,
+          code: "P1001",
+        });
+      }
       return await argon2.verify(hash, plain);
     }
     const bcrypt = await import("bcryptjs");
     return await bcrypt.compare(plain, hash);
-  } catch {
+  } catch (err) {
+    // If we already threw a 503 above, re-throw it
+    if (err && typeof err === "object" && "status" in err && (err as { status?: number }).status === 503) {
+      throw err;
+    }
+    // Malformed hash or bcrypt failure is a credential mismatch, not a server fault
     return false;
   }
 }
@@ -86,65 +101,131 @@ export interface SessionUser {
   isActive: boolean;
 }
 
+function isPrismaTransientCode(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && ["P1001", "P1002", "P1008", "P1017", "P2024", "P2037"].includes(code)) {
+    return true;
+  }
+  return false;
+}
+
 export async function createSession(
   userId: string,
   kind: "STUDENT" | "ADMIN",
   meta?: { ip?: string; userAgent?: string }
 ): Promise<string> {
-  const token = newToken();
-  const ttlHours = env.SESSION_TTL_HOURS;
+  let ttlHours: number;
+  try {
+    ttlHours = env.SESSION_TTL_HOURS;
+  } catch (err) {
+    console.error("[auth] SESSION_TTL_HOURS misconfigured:", err instanceof Error ? err.message : err);
+    ttlHours = 24;
+  }
+
   const expiresAt = new Date(Date.now() + ttlHours * 3600_000);
-  await prisma.session.create({
-    data: {
-      userId,
-      tokenHash: sha256(token),
-      kind,
-      ip: meta?.ip ?? null,
-      userAgent: meta?.userAgent?.slice(0, 255) ?? null,
-      expiresAt,
-    },
-  });
-  const store = await cookies();
-  store.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: expiresAt,
-  });
-  return token;
+
+  // Retry on rare tokenHash collision (P2002). Original code threw raw Prisma error as 500.
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const token = newToken();
+    try {
+      await prisma.session.create({
+        data: {
+          userId,
+          tokenHash: sha256(token),
+          kind,
+          ip: meta?.ip ?? null,
+          userAgent: meta?.userAgent?.slice(0, 255) ?? null,
+          expiresAt,
+        },
+      });
+      // Only set cookie after successful DB write
+      try {
+        const store = await cookies();
+        store.set(SESSION_COOKIE, token, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: process.env.NODE_ENV === "production",
+          path: "/",
+          expires: expiresAt,
+        });
+      } catch (err) {
+        // Cookie failure is a server misconfiguration, but the session already exists.
+        // Log and re-throw so the login can clean up or report correctly.
+        console.error("[auth] failed to set session cookie:", err instanceof Error ? err.message : err);
+        // Attempt to clean up the just-created session to avoid orphaned rows
+        try {
+          await prisma.session.deleteMany({ where: { tokenHash: sha256(token) } });
+        } catch {}
+        throw Object.assign(new Error("Failed to establish session"), { status: 500 });
+      }
+      return token;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "P2002" && attempt < 2) {
+        lastError = err;
+        continue; // retry with new token
+      }
+      if (isPrismaTransientCode(err)) {
+        console.error("[auth] transient DB error during createSession:", (err as Error).message);
+        throw Object.assign(new Error("Service temporarily unavailable"), { status: 503, code });
+      }
+      throw err;
+    }
+  }
+  throw lastError ?? new Error("Failed to create session");
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
-  const session = await prisma.session.findUnique({
-    where: { tokenHash: sha256(token) },
-    include: { user: true },
-  });
-  if (!session) return null;
-  if (session.revokedAt || session.expiresAt < new Date()) return null;
-  if (!session.user.isActive) return null;
-  return {
-    id: session.user.id,
-    email: session.user.email,
-    name: session.user.name,
-    role: session.user.role,
-    isActive: session.user.isActive,
-  };
+  try {
+    const store = await cookies();
+    const token = store.get(SESSION_COOKIE)?.value;
+    if (!token) return null;
+    const session = await prisma.session.findUnique({
+      where: { tokenHash: sha256(token) },
+      include: { user: true },
+    });
+    if (!session) return null;
+    if (session.revokedAt || session.expiresAt < new Date()) return null;
+    if (!session.user.isActive) return null;
+    return {
+      id: session.user.id,
+      email: session.user.email,
+      name: session.user.name,
+      role: session.user.role,
+      isActive: session.user.isActive,
+    };
+  } catch (err) {
+    // DB connectivity / schema skew during session lookup must not crash the page
+    // as a 500. Return null so the layout redirects to /login, and let
+    // instrumentation log the skew.
+    if (err && typeof err === "object" && "status" in err && typeof (err as { status?: number }).status === "number") {
+      throw err;
+    }
+    console.error("[auth] getSessionUser failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 export async function destroySession(): Promise<void> {
-  const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
-  if (token) {
-    await prisma.session.updateMany({
-      where: { tokenHash: sha256(token) },
-      data: { revokedAt: new Date() },
-    });
+  try {
+    const store = await cookies();
+    const token = store.get(SESSION_COOKIE)?.value;
+    if (token) {
+      await prisma.session.updateMany({
+        where: { tokenHash: sha256(token) },
+        data: { revokedAt: new Date() },
+      });
+    }
+    store.delete(SESSION_COOKIE);
+  } catch (err) {
+    console.error("[auth] destroySession failed:", err instanceof Error ? err.message : err);
+    // Still attempt to clear cookie
+    try {
+      const store = await cookies();
+      store.delete(SESSION_COOKIE);
+    } catch {}
   }
-  store.delete(SESSION_COOKIE);
 }
 
 /**
@@ -156,23 +237,33 @@ export async function destroySession(): Promise<void> {
  * attempts and delaying the lockout. The lock itself is applied by a
  * conditional update that only matches once the counter reaches the
  * threshold, so concurrent failures cannot skip the lockout either.
+ *
+ * Resilience: DB failures here must NOT turn a wrong-password 401 into a 500.
+ * The caller (login route) already handles the credential failure; we log
+ * and swallow transient errors so the user gets the expected 401.
  */
 export async function recordFailedLogin(
   userId: string,
   opts: { maxFailed: number; lockMinutes: number }
 ): Promise<void> {
-  const locked = await prisma.user.updateMany({
-    where: { id: userId, failedLoginCount: { gte: opts.maxFailed - 1 } },
-    data: {
-      failedLoginCount: { increment: 1 },
-      lockedUntil: new Date(Date.now() + opts.lockMinutes * 60_000),
-    },
-  });
-  if (locked.count === 0) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { failedLoginCount: { increment: 1 } },
+  try {
+    const locked = await prisma.user.updateMany({
+      where: { id: userId, failedLoginCount: { gte: opts.maxFailed - 1 } },
+      data: {
+        failedLoginCount: { increment: 1 },
+        lockedUntil: new Date(Date.now() + opts.lockMinutes * 60_000),
+      },
     });
+    if (locked.count === 0) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { failedLoginCount: { increment: 1 } },
+      });
+    }
+  } catch (err) {
+    console.error("[auth] recordFailedLogin failed for", userId, ":", err instanceof Error ? err.message : err);
+    // Swallow — login should still return 401 to the user. Lockout will be
+    // eventually consistent on next successful DB write.
   }
 }
 

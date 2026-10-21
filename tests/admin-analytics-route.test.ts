@@ -137,7 +137,7 @@ describe("GET /api/admin/analytics", () => {
     expect(peak).toBeLessThanOrEqual(4);
   });
 
-  it("turns a pool timeout into a generic 500 without leaking the connection string", async () => {
+  it("turns a pool timeout into a 503 without leaking the connection string", async () => {
     failWith = Object.assign(
       new Error(
         "Timed out fetching a new connection from the connection pool: postgresql://postgres:secret@aws-0.pooler.supabase.com:6543/postgres"
@@ -148,10 +148,10 @@ describe("GET /api/admin/analytics", () => {
 
     try {
       const res = await route.GET();
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(503);
 
       const body = await res.json();
-      expect(body).toEqual({ error: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
+      expect(body).toMatchObject({ error: expect.any(String), code: "SERVICE_UNAVAILABLE" });
 
       const serialised = JSON.stringify(body);
       for (const leak of ["postgresql://", "secret", "P2024", "pooler.supabase.com", "Timed out"]) {
