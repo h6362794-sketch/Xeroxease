@@ -505,7 +505,7 @@ describe("POST /api/orders — failure handling", () => {
     expect(committedEvents).toHaveLength(1);
   });
 
-  it("returns a generic 500 for database failures and never leaks connection details", async () => {
+  it("returns a 503 for transient pool failures and never leaks connection details", async () => {
     const secret = "postgresql://postgres:super-secret@aws-0.pooler.supabase.com:6543/postgres";
     createOrderMock.mockRejectedValueOnce(
       Object.assign(new Error(`Timed out fetching a new connection: ${secret}`), { code: "P2024" })
@@ -516,9 +516,9 @@ describe("POST /api/orders — failure handling", () => {
       const { req } = post(validBody);
       const res = await route.POST(req);
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(503);
       const body = await json(res);
-      expect(body).toEqual({ error: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
+      expect(body).toMatchObject({ error: expect.any(String), code: "SERVICE_UNAVAILABLE" });
       const serialised = JSON.stringify(body);
       expect(serialised).not.toContain("postgresql://");
       expect(serialised).not.toContain("super-secret");

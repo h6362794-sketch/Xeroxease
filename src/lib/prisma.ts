@@ -1,19 +1,28 @@
 import { PrismaClient } from "@prisma/client";
 import { assertDatabaseConfig, logDatabaseConfigDiagnostics } from "@/server/db-config";
 
-// Fail fast on a broken database configuration before any query runs,
-// and log sanitised diagnostics (never the connection string itself).
-// Both helpers are pure string checks, so they are safe at module load.
-assertDatabaseConfig({
-  databaseUrl: process.env.DATABASE_URL,
-  directUrl: process.env.DIRECT_URL,
-  nodeEnv: process.env.NODE_ENV,
-});
-logDatabaseConfigDiagnostics({
-  databaseUrl: process.env.DATABASE_URL,
-  directUrl: process.env.DIRECT_URL,
-  nodeEnv: process.env.NODE_ENV,
-});
+// Validate configuration at import, but do not crash the module on
+// misconfiguration — that would turn every API route into an unhandled
+// 500 without a correlation id or safe message. Instead log the problem
+// and let withErrorHandling surface a guided 500/503 at request time.
+try {
+  assertDatabaseConfig({
+    databaseUrl: process.env.DATABASE_URL,
+    directUrl: process.env.DIRECT_URL,
+    nodeEnv: process.env.NODE_ENV,
+  });
+} catch (err) {
+  console.error("[db-config] Startup database check failed:", err instanceof Error ? err.message : err);
+}
+try {
+  logDatabaseConfigDiagnostics({
+    databaseUrl: process.env.DATABASE_URL,
+    directUrl: process.env.DIRECT_URL,
+    nodeEnv: process.env.NODE_ENV,
+  });
+} catch (err) {
+  console.warn("[db-config] Diagnostics failed:", err instanceof Error ? err.message : err);
+}
 
 // Singleton to avoid exhausting connections in dev (HMR) and serverless.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };

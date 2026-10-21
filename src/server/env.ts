@@ -13,7 +13,8 @@ const num = (key: string, fallback: number): number => {
   if (raw === undefined || raw === "") return fallback;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
-    throw new Error(`Environment variable ${key} must be a number, got "${raw}"`);
+    console.warn(`[env] ${key} is not a finite number (got "${raw}"); using fallback ${fallback}.`);
+    return fallback;
   }
   return parsed;
 };
@@ -31,6 +32,8 @@ export const env = {
   get SESSION_SECRET() {
     const v = required("SESSION_SECRET");
     if (v.length < 32) {
+      // Keep the throw for misconfiguration — withErrorHandling maps it to
+      // a safe 500 with guidance, and config:check already fails fast.
       throw new Error(
         "SESSION_SECRET must be at least 32 characters. Generate one with: openssl rand -base64 32"
       );
@@ -93,7 +96,8 @@ export const env = {
   get UPLOAD_INTENT_TTL_SECONDS() {
     const v = num("UPLOAD_INTENT_TTL_SECONDS", 600);
     if (v < 60 || v > 3600) {
-      throw new Error("UPLOAD_INTENT_TTL_SECONDS must be between 60 and 3600 seconds");
+      console.warn(`[env] UPLOAD_INTENT_TTL_SECONDS ${v} out of range [60,3600]; clamping.`);
+      return Math.max(60, Math.min(3600, v));
     }
     return v;
   },
@@ -101,7 +105,8 @@ export const env = {
   get SIGNED_DOWNLOAD_URL_TTL_SECONDS() {
     const v = num("SIGNED_DOWNLOAD_URL_TTL_SECONDS", 60);
     if (v < 10 || v > 900) {
-      throw new Error("SIGNED_DOWNLOAD_URL_TTL_SECONDS must be between 10 and 900 seconds");
+      console.warn(`[env] SIGNED_DOWNLOAD_URL_TTL_SECONDS ${v} out of range [10,900]; clamping.`);
+      return Math.max(10, Math.min(900, v));
     }
     return v;
   },
@@ -113,7 +118,10 @@ export const env = {
    */
   get STORAGE_PROVIDER_MAX_FILE_BYTES() {
     const v = num("STORAGE_PROVIDER_MAX_FILE_BYTES", 0);
-    if (v < 0) throw new Error("STORAGE_PROVIDER_MAX_FILE_BYTES must not be negative");
+    if (v < 0) {
+      console.warn(`[env] STORAGE_PROVIDER_MAX_FILE_BYTES negative (${v}); using 0.`);
+      return 0;
+    }
     return v;
   },
 

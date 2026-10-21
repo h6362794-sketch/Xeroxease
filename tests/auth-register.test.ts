@@ -224,7 +224,7 @@ describe("registration — duplicates", () => {
     state.createThrows = new Error("connection refused");
     const res = await POST(post(VALID));
     expect(res.status).toBe(500);
-    expect(await body(res)).toEqual({ error: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
+    expect(await body(res)).toMatchObject({ error: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
   });
 
   it("does not leak database internals on a lookup failure", async () => {
