@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { ZodError, type ZodSchema } from "zod";
 import { rateLimitAsync } from "./rate-limit";
 import { env } from "./env";
+import { describeSchemaSkew } from "./schema-skew";
 
 export function json<T>(data: T, init?: ResponseInit) {
   return NextResponse.json(data, init);
@@ -95,23 +96,6 @@ function isConfigError(err: unknown): boolean {
   return false;
 }
 
-function isSchemaSkewLike(err: unknown): boolean {
-  const code = getPrismaCode(err);
-  if (code === "P2021" || code === "P2022") return true;
-  if (err instanceof Error) {
-    const msg = err.message.toLowerCase();
-    if (
-      msg.includes("does not exist in the current database") ||
-      msg.includes("column") && msg.includes("does not exist") ||
-      msg.includes("relation") && msg.includes("does not exist") ||
-      msg.includes('type "') && msg.includes("does not exist")
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
  * Wraps a handler with safe error handling. Never leaks internals in production.
  *
@@ -158,9 +142,10 @@ export function withErrorHandling(handler: () => Promise<Response>): Promise<Res
       return res;
     }
 
-    if (isSchemaSkewLike(err)) {
+    const schemaSkew = describeSchemaSkew(err);
+    if (schemaSkew) {
       const id = randomUUID();
-      console.error("[api][schema-skew]", { requestId: id, code: getPrismaCode(err) }, err);
+      console.error("[api][schema-skew]", { requestId: id, schemaSkew });
       const res = NextResponse.json(
         {
           error: "Service is updating. Please try again in a moment.",

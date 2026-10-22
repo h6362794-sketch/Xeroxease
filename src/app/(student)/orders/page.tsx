@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Button, Card, EmptyState, Input, Select, Skeleton } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorState, Input, Select, Skeleton } from "@/components/ui";
 import { PaymentStatusBadge, StatusBadge } from "@/components/status-badge";
-import { api } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
 import { formatCurrencyINR, formatDateShort, timeAgo } from "@/lib/utils";
 import { Search, Package } from "lucide-react";
 
@@ -25,6 +25,7 @@ interface OrderRow {
 
 export default function MyOrdersPage() {
   const [orders, setOrders] = useState<OrderRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("ALL");
   const [page, setPage] = useState(1);
@@ -32,6 +33,7 @@ export default function MyOrdersPage() {
 
   const load = useCallback(async () => {
     setOrders(null);
+    setError(null);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: "10" });
       if (q.trim()) params.set("q", q.trim());
@@ -39,8 +41,9 @@ export default function MyOrdersPage() {
       const data = await api<{ orders: OrderRow[]; total: number }>(`/api/orders?${params}`);
       setOrders(data.orders);
       setTotal(data.total);
-    } catch {
+    } catch (err) {
       setOrders([]);
+      setError(err instanceof ApiError ? err.message : "Orders could not be loaded right now. Please try again.");
     }
   }, [q, status, page]);
 
@@ -82,6 +85,10 @@ export default function MyOrdersPage() {
         <div className="space-y-3">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 rounded-2xl" />)}
         </div>
+      ) : error ? (
+        <Card>
+          <ErrorState title="Could not load orders" sub={error} onRetry={load} />
+        </Card>
       ) : orders.length === 0 ? (
         <Card>
           <EmptyState

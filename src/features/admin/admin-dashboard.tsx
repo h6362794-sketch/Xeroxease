@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   Package, IndianRupee, FileText, Clock3, Printer, PackageCheck, CheckCircle2, XCircle, Star, Loader2,
 } from "lucide-react";
-import { Card, Skeleton, StarDisplay, EmptyState } from "@/components/ui";
-import { api } from "@/lib/api-client";
+import { Card, Skeleton, StarDisplay, EmptyState, ErrorState } from "@/components/ui";
+import { api, ApiError } from "@/lib/api-client";
 import { formatCurrencyINR, timeAgo } from "@/lib/utils";
 
 interface Analytics {
@@ -32,15 +32,40 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function AdminDashboard({ role }: { role: string }) {
   const [data, setData] = useState<Analytics | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const next = await api<Analytics>("/api/admin/analytics");
+      setData(next);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Dashboard metrics could not be loaded right now. Please try again.");
+    }
+  }, []);
 
   useEffect(() => {
-    const load = () => api<Analytics>("/api/admin/analytics").then(setData).catch(() => setData(null));
     load();
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
-  }, []);
+  }, [load]);
 
   if (!data) {
+    if (error) {
+      return (
+        <div className="space-y-5">
+          <div>
+            <h1 className="text-2xl font-extrabold text-white tracking-tight">Dashboard</h1>
+            <p className="text-sm text-zinc-500 mt-1">
+              {role === "SUPER_ADMIN" ? "Super admin view — full control." : "Operations overview."}
+            </p>
+          </div>
+          <Card>
+            <ErrorState title="Could not load dashboard metrics" sub={error} onRetry={load} />
+          </Card>
+        </div>
+      );
+    }
     return (
       <div className="space-y-5">
         <Skeleton className="h-9 w-56" />

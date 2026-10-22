@@ -39,3 +39,41 @@ it("renders an existing order and its Decimal-like total", async () => {
   expect(html).toContain("XE-TEST");
   expect(html).toMatch(/₹.*4/);
 });
+it("projects only summary fields and never selects internal notes, collection hashes, or full snapshots", async () => {
+  await DashboardPage();
+  const activeSelect = db.findFirst.mock.calls[0][0].select;
+  const recentSelect = db.findMany.mock.calls[0][0].select;
+  expect(activeSelect).toEqual({
+    id: true,
+    orderNumber: true,
+    paperSize: true,
+    colorMode: true,
+    totalPages: true,
+    status: true,
+  });
+  expect(recentSelect).toEqual({
+    id: true,
+    orderNumber: true,
+    createdAt: true,
+    totalPages: true,
+    copies: true,
+    updatedAt: true,
+    totalAmount: true,
+    status: true,
+  });
+  for (const field of ["adminNotes", "collectionTokenHash", "pricingSnapshot"]) {
+    expect(activeSelect[field]).toBeUndefined();
+    expect(recentSelect[field]).toBeUndefined();
+  }
+});
+it("styles canonical DELIVERED orders consistently with legacy COMPLETED orders", async () => {
+  const base = { paperSize: "A4", colorMode: "BW", totalPages: 2, copies: 1, totalAmount: { toString: () => "4" }, createdAt: new Date(), updatedAt: new Date() };
+  db.findMany.mockResolvedValue([
+    { ...base, id: "o-del", orderNumber: "XE-DEL", status: "DELIVERED" },
+    { ...base, id: "o-cmp", orderNumber: "XE-CMP", status: "COMPLETED" },
+  ]);
+  const html = renderToStaticMarkup(await DashboardPage());
+  expect(html).toContain("Delivered");
+  expect(html).toContain("Completed");
+  expect(html.match(/text-emerald-300/g)?.length).toBe(2);
+});
