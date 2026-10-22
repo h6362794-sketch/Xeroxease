@@ -12,6 +12,13 @@ dist
 # local private storage (never public)
 .data
 
+# database & storage backup artifacts (always store outside repo; block accidental staging)
+backups/
+*.dump
+storage-manifest.json
+rehearsal-report.json
+SHA256SUMS
+
 # local debug artifacts
 build-log.txt
 build-output.log
