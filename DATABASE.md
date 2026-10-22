@@ -140,6 +140,73 @@ password) when the configuration is ambiguous or unsafe.
 - **Recovery**: restore the Postgres dump to a fresh Supabase project, update `DATABASE_URL`/`DIRECT_URL`, re-point storage to the restored bucket, run `npx prisma migrate deploy` to confirm schema state.
 - **Payment reconciliation**: `payment_events` + `orders.payment_ref` provide the reference trail to reconcile against bank/UPI statements.
 
+## Production Migration & Recovery Runbook (October 2026 Lifecycle Migrations)
+
+### Mandatory safety gate (STOP until every item passes)
+
+Do **not** execute `npx prisma migrate deploy` or write to the Production database until **all three** gates are complete and recorded:
+
+1. **Verified production export (`pg_dump -Fc` + storage manifest):**
+   Run from an operator workstation with direct TLS egress to the production session/direct host (`DIRECT_URL`, port `5432`) — never via chat logs or MCP transcripts:
+   ```bash
+   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+   umask 077
+   mkdir -p "./backups/${STAMP}"
+
+   # 1. Full custom-format PostgreSQL dump (use PostgreSQL 17 pg_dump matching server 17.x)
+   pg_dump --dbname="$DIRECT_URL" -Fc --no-owner --no-privileges \
+     -f "./backups/${STAMP}/xeroxease-prod-${STAMP}.dump"
+
+   # 2. Verify archive integrity + capture pre-migration row/amount checksums (counts & aggregates only)
+   pg_restore --list "./backups/${STAMP}/xeroxease-prod-${STAMP}.dump" > "./backups/${STAMP}/toc.txt"
+   sha256sum "./backups/${STAMP}/xeroxease-prod-${STAMP}.dump" > "./backups/${STAMP}/SHA256SUMS"
+   ```
+   Archive the private `documents` bucket objects (or copy to a timestamped backup prefix/bucket via Supabase CLI / S3 API) alongside `SHA256SUMS`.
+
+2. **Verified isolated restore + migration rehearsal (disposable PostgreSQL 17 target only):**
+   ```bash
+   createdb -h 127.0.0.1 -U postgres "xe_rehearsal_${STAMP}"
+   pg_restore --dbname="postgresql://postgres@127.0.0.1:5432/xe_rehearsal_${STAMP}" \
+     --no-owner --no-privileges "./backups/${STAMP}/xeroxease-prod-${STAMP}.dump"
+
+   # Confirm row counts & totals match production precheck before migrating the rehearsal copy
+   DATABASE_URL="postgresql://postgres@127.0.0.1:5432/xe_rehearsal_${STAMP}" \
+   DIRECT_URL="postgresql://postgres@127.0.0.1:5432/xe_rehearsal_${STAMP}" \
+     npx prisma migrate deploy
+
+   DATABASE_URL="postgresql://postgres@127.0.0.1:5432/xe_rehearsal_${STAMP}" \
+   DIRECT_URL="postgresql://postgres@127.0.0.1:5432/xe_rehearsal_${STAMP}" \
+     npm run preflight:schema
+   ```
+   Verify all existing `users`, `sessions`, `orders` (including legacy `COMPLETED`, `PAYMENT_PENDING`, `PAYMENT_UNDER_REVIEW`, `READY_FOR_COLLECTION` rows), `uploaded_files`, `order_events`, `payment_events`, `recovery_codes`, `notifications`, `pricing_config`, and `settings` survive unchanged, then drop the local rehearsal database (`dropdb -h 127.0.0.1 -U postgres "xe_rehearsal_${STAMP}"`) and store the backup encrypted offline.
+
+3. **Explicit project-owner GO authorization** naming the target project reference (`vjwvvoczyuebtowbnuqf`) and maintenance window.
+
+### Execution sequence (after all three gates pass)
+
+```bash
+# Precheck 1 — validate environment URL shapes without printing secrets
+NODE_ENV=production npm run config:check
+
+# Precheck 2 — confirm the exact two pending October 20 migrations (and zero failed rows)
+npx prisma migrate status
+
+# Apply pending migrations in order over DIRECT_URL (port 5432 session connection, never port 6543 transaction pooler)
+#   1. 20261020000000_order_lifecycle_enum_values (commits new enum labels in its own transaction)
+#   2. 20261020000100_order_lifecycle_payments_pricing (alters status default, creates PaymentMethod, adds 9 columns + composite index)
+npx prisma migrate deploy
+
+# Postcheck — must report 0 pending and 0 unknown migrations (exit code 0)
+npx prisma migrate status
+npm run preflight:schema
+```
+
+### Post-migration verification & rollback discipline
+
+- **Smoke check:** Verify `/api/health` (`200`), authenticated student `/dashboard` (`200`, active + historical legacy orders visible), `/orders` (`200` including status filter), and `/admin` (`200`, analytics cards rendered).
+- **If a migration statement fails mid-run:** **STOP immediately.** Do not manually edit `_prisma_migrations` or mark an unfinished migration `--applied`. Inspect `_prisma_migrations` (`finished_at IS NULL`) and live catalog state; if any partial DDL landed, restore the verified pre-migration `xeroxease-prod-${STAMP}.dump` archive cleanly (`pg_restore --clean --if-exists --no-owner --no-privileges`).
+- **Application rollback caveat:** PostgreSQL cannot drop enum values (`ALTER TYPE ... DROP VALUE` does not exist). Once rows using `ORDER_RECEIVED` / `ACCEPTED` / `READY_FOR_PICKUP` / `DELIVERED` / `REJECTED` are written, only application builds that include those enum labels (`77ce38c` or newer) can read those rows without Prisma enum deserialisation errors; rolling further back requires restoring the pre-migration dump.
+
 ## Data retention
 
 - Configurable via Super Admin → Settings (`retentionDays`, default 30): completed-order files may be purged after N days while order metadata is retained for accounting.
