@@ -310,7 +310,7 @@ if (problems.length > 0) {
       "    --to-schema-datamodel prisma/schema.prisma \\\n" +
       "    --shadow-database-url \"$SHADOW_DATABASE_URL\" \\\n" +
       "    --exit-code\n\n" +
-      "Only that command replays the migrations against a real PostgreSQL 16 instance.\n" +
+      "CI replays the migrations on real PostgreSQL 16 and 17 services.\n" +
       "Never mark a migration as applied on the strength of this script alone, and never\n" +
       "run `prisma migrate resolve --applied` for a migration whose SQL you have not read."
   );

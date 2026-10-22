@@ -25,10 +25,16 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      # `npm ci` runs `prisma generate` via postinstall, so the generated client is
-      # present before typecheck/build. No database is needed for that step.
+      # `npm ci` runs `prisma generate` via postinstall. Keep the schema check and
+      # client generation visible as CI steps as well, so failures are attributable.
       - name: Install dependencies
         run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate Prisma client
+        run: npx prisma generate
 
       # Cheap text-level drift check: fails if schema.prisma and the committed
       # migration SQL disagree on tables, columns, indexes or unique constraints.
@@ -50,12 +56,16 @@ jobs:
         run: npm run build
 
   migrations:
-    name: Migration check against a clean database
+    name: Migration check (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [16, 17]
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: xeroxease_ci
@@ -68,11 +78,12 @@ jobs:
       DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
       SESSION_SECRET: "ci-only-secret-value-that-is-at-least-32-chars"
       SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci_shadow"
-      # Opt-in for tests/recovery-concurrency.pg.test.ts. Set ONLY here: this is the
-      # only job with a real PostgreSQL service. The `verify` job also defines
-      # DATABASE_URL but has no database, so the flag keeps the integration test from
-      # running there.
+      # Opt-ins are set ONLY here: this is the only job with disposable PostgreSQL
+      # services. The `verify` job defines DATABASE_URL but has no database.
       PG_INTEGRATION_TESTS: "1"
+      # migration-replay.pg.test.ts only accepts loopback targets and creates/drops
+      # uniquely named scratch databases on this service.
+      PG_TEST_DSN: "postgresql://postgres:postgres@localhost:5432/postgres"
 
     steps:
       - uses: actions/checkout@v4
@@ -82,19 +93,23 @@ jobs:
           cache: "npm"
       - run: npm ci
 
+      - name: Check disposable replay test prerequisites
+        run: |
+          test -n "${PG_TEST_DSN:-}"
+          command -v psql >/dev/null
+
       - name: Create shadow database for drift detection
         run: psql "postgresql://postgres:postgres@localhost:5432/postgres" -c 'CREATE DATABASE xeroxease_ci_shadow;'
 
-      - name: Apply migrations
+      - name: Apply all migrations (PostgreSQL ${{ matrix.postgres }})
         run: npx prisma migrate deploy
 
       - name: Verify the migrations reproduce schema.prisma
-        # AUTHORITATIVE drift check: replays the migrations into a real PostgreSQL 16
-        # database and diffs the result against schema.prisma. Exits non-zero on any
-        # difference, so a schema change committed without a matching migration breaks
-        # the build. This is the check that proves schema/migration agreement — the
-        # text-level `npm run schema:check` is only a pre-flight and has previously
-        # passed while real drift existed.
+        # AUTHORITATIVE drift check: replays the migrations into a real PostgreSQL
+        # database (both 16 and 17 matrix legs) and diffs the result against schema.prisma.
+        # Exits non-zero on any difference, so a schema change committed without a
+        # matching migration breaks the build. The text-level `npm run schema:check`
+        # remains only a pre-flight.
         run: |
           npx prisma migrate diff \
             --from-migrations prisma/migrations \
@@ -105,6 +120,9 @@ jobs:
       - name: Confirm no pending migrations
         run: npx prisma migrate status
 
+      - name: Replay baseline and October 20 migrations (PostgreSQL ${{ matrix.postgres }})
+        run: npx vitest run tests/migration-replay.pg.test.ts --reporter=verbose
+
       # ---------------------------------------------------------------------
       # Real-database concurrency test.
       #
@@ -112,12 +130,12 @@ jobs:
       # in-memory Prisma stand-in, which cannot demonstrate database-level
       # serialisation. This runs `tests/recovery-concurrency.pg.test.ts`, which opens
       # genuinely independent Prisma clients and races them for a single recovery
-      # code against this PostgreSQL 16 container.
+      # code against each PostgreSQL matrix service.
       #
       # The test skips automatically when DATABASE_URL is unset, so it is a no-op in
       # environments without a database.
       # ---------------------------------------------------------------------
-      - name: Recovery-code concurrency (independent connections, PostgreSQL 16)
+      - name: Recovery-code concurrency (independent connections, PostgreSQL ${{ matrix.postgres }})
         run: npx vitest run tests/recovery-concurrency.pg.test.ts --reporter=verbose
 
   audit:
