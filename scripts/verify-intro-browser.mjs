@@ -35,6 +35,7 @@ try {
   `);
   server = await createServer({
     configFile: false, root: fixture, publicDir: path.join(root, "public"),
+    css: { postcss: root },
     resolve: { alias: { "@": path.join(root, "src") } },
     oxc: { jsx: { runtime: "automatic" } },
     server: { host: "0.0.0.0", port: 4183, strictPort: true, allowedHosts: true, fs: { allow: [root] } },
@@ -50,7 +51,22 @@ try {
   }
   browser = await playwright.launch({ executablePath, args, headless: true });
   const url = "http://127.0.0.1:4183";
-  for (const [width, height] of [[320,568], [390,844], [430,932], [844,390], [768,1024], [1024,768], [1366,768], [1920,1080]]) {
+  const viewports = [
+    // Mobile portrait & landscape
+    [320, 568], [568, 320],
+    [360, 800], [800, 360],
+    [375, 812], [812, 375],
+    [390, 844], [844, 390],
+    [430, 932], [932, 430],
+    // Tablet portrait & landscape
+    [768, 1024], [1024, 768],
+    // Desktop / laptop
+    [1280, 720],
+    [1366, 768],
+    [1440, 900],
+    [1920, 1080],
+  ];
+  for (const [width, height] of viewports) {
     const context = await browser.newContext({ viewport: { width, height } });
     const page = await context.newPage();
     const errors = [];
@@ -58,10 +74,20 @@ try {
     await page.goto(url);
     await page.locator("video").waitFor();
     const box = await page.locator("video").boundingBox();
-    const ratio = width < 768 && height > width ? 9/16 : 16/9;
-    assert(Math.abs(box.width / box.height - ratio) < 0.01);
+    const ratio = 16 / 9;
+    assert(Math.abs(box.width / box.height - ratio) < 0.01, `expected 16:9 at ${width}x${height}, got ${box.width}x${box.height}`);
+    if (width / height <= ratio) {
+      assert(Math.abs(box.width - width) <= 1, `expected full width ${width} at ${width}x${height}, got ${box.width}`);
+    }
+    if (width / height >= ratio) {
+      assert(Math.abs(box.height - height) <= 1, `expected full height ${height} at ${width}x${height}, got ${box.height}`);
+    }
+    assert(Math.abs((box.x + box.width / 2) - width / 2) <= 1, `expected horizontal center at ${width}x${height}`);
+    assert(Math.abs((box.y + box.height / 2) - height / 2) <= 1, `expected vertical center at ${width}x${height}`);
     assert(box.x >= -1 && box.y >= -1 && box.x + box.width <= width + 1 && box.y + box.height <= height + 1);
     assert.equal(await page.locator("video").evaluate(v => getComputedStyle(v).objectFit), "contain");
+    const skipBox = await page.getByRole("button", { name: "Skip introduction" }).boundingBox();
+    assert(skipBox.x >= 0 && skipBox.y >= 0 && skipBox.x + skipBox.width <= width && skipBox.y + skipBox.height <= height);
     assert.equal(await page.getByRole("button", { name: "Skip introduction" }).evaluate(v => v === document.activeElement), true);
     for (const key of ["Tab", "Shift+Tab"]) {
       await page.keyboard.press(key);
@@ -70,7 +96,7 @@ try {
     assert.equal(await page.locator("[data-underlying]").evaluate(v => !!v.closest("[inert]")), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(errors, []);
-    pass(`viewport ${width}x${height}, contain, focus loop, inert background, no overflow/errors`);
+    pass(`viewport ${width}x${height} (${ box.width.toFixed(1) }x${ box.height.toFixed(1) }), contain, focus loop, inert background, no overflow/errors`);
     await context.close();
   }
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -85,7 +111,13 @@ try {
   assert.equal(await page.locator("video").evaluate(v => v === window.originalVideo && v.currentTime >= window.playhead), true);
   const rotated = await page.locator("video").boundingBox();
   assert(Math.abs(rotated.width / rotated.height - 16/9) < 0.01);
-  pass("rotation preserves element/playhead and changes ratio");
+  assert(Math.abs(rotated.height - 390) <= 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(100);
+  const restored = await page.locator("video").boundingBox();
+  assert(Math.abs(restored.width / restored.height - 16/9) < 0.01);
+  assert(Math.abs(restored.width - 390) <= 1);
+  pass("rotation preserves element/playhead and resizes smoothly across portrait and landscape");
   await page.getByRole("button", { name: "Skip introduction" }).click();
   assert.equal(await page.locator("[data-underlying]").evaluate(v => !!v.closest("[inert]")), true);
   assert.equal(await page.evaluate(() => window.originalVideo.paused), true);
