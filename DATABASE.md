@@ -151,27 +151,24 @@ Do **not** execute `npx prisma migrate deploy` or write to the Production databa
    - **Never** use port `6543` (`?pgbouncer=true` transaction mode) for `pg_dump` or `prisma migrate deploy` — `scripts/rehearse-prod-backup.sh` rejects port `6543` automatically.
 
 2. **Turnkey secret-safe backup + Storage archive + isolated PG17 restore rehearsal (`npm run backup:rehearse`):**
-   `scripts/rehearse-prod-backup.sh` enforces `umask 077`, refuses any target folder inside the Git repository, never echoes credentials or customer filenames, verifies `pg_dump -Fc` + `pg_restore --list`, archives all private `documents` bucket objects via `scripts/backup-storage.ts`, verifies SHA-256 digests across all artifacts, restores into a disposable local PostgreSQL 17 database (using native PG17 tools or an automatic loopback-only `postgres:17-alpine` Docker container), applies pending Prisma migrations **only on the local rehearsal copy**, verifies `1:1` row preservation + `5:40:DELIVERED:UPI` schema convergence + untouched source `_prisma_migrations`, and writes a restricted `0600` `rehearsal-report.json`.
+   `scripts/rehearse-prod-backup.ts` (cross-platform Node/TypeScript runner invoked by `npm run backup:rehearse` on Windows PowerShell, WSL2, macOS, and Linux) enforces `0700`/`0600` permissions outside the Git repository, redacts secrets from all logs/diagnostics, rejects port `6543` and `?pgbouncer=true`, exports `pg_dump --schema=public -Fc` (all 14 `public` XeroxEase tables + enums + constraints, avoiding non-portable Supabase internal `vault`/`graphql` schemas during restore), verifies `pg_restore --list`, archives all private `documents` bucket objects via `scripts/backup-storage.ts`, verifies SHA-256 digests, restores into an isolated loopback PostgreSQL 17 database (via Docker Desktop `postgres:17-alpine` on `127.0.0.1` or native PostgreSQL 17), applies pending Prisma migrations **strictly on loopback**, verifies `1:1` row + order-amount preservation + `5:40:DELIVERED:UPI` schema convergence + untouched source `_prisma_migrations`, and writes `rehearsal-report.json`.
 
-   - **Linux / macOS / WSL2 (shortest exact command):**
+   - **Windows PowerShell (native — Node.js 20+ and Docker Desktop running, no WSL required):**
+     ```powershell
+     $env:DIRECT_URL = Read-Host "Supabase Session Pooler URI (port 5432, no pgbouncer=true)"
+     $env:NEXT_PUBLIC_SUPABASE_URL = Read-Host "Supabase Project URL (https://<ref>.supabase.co)"
+     $env:SUPABASE_SERVICE_ROLE_KEY = Read-Host "Supabase Service Role Key"
+
+     npm run backup:rehearse
+     ```
+   - **Linux / macOS / WSL2 (Node.js 20+ and Docker or PostgreSQL 17 installed):**
      ```bash
-     # Interactive prompt reads secrets without saving them in shell history
-     read -r -s -p "Supabase Session Pooler URI (port 5432): " DIRECT_URL && echo
+     read -r -s -p "Supabase Session Pooler URI (port 5432, no pgbouncer=true): " DIRECT_URL && echo
      read -r -p "Supabase Project URL (https://<ref>.supabase.co): " NEXT_PUBLIC_SUPABASE_URL
      read -r -s -p "Supabase Service Role Key: " SUPABASE_SERVICE_ROLE_KEY && echo
      export DIRECT_URL NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY
 
      npm run backup:rehearse
-     ```
-   - **Windows PowerShell (delegating to WSL2 + Docker Desktop without leaking secrets on argv):**
-     ```powershell
-     # Reads secrets safely in memory and runs the rehearsal outside the repo in WSL $HOME/xeroxease-backups/
-     $env:DIRECT_URL = Read-Host "Supabase Session Pooler URI (port 5432)"
-     $env:NEXT_PUBLIC_SUPABASE_URL = Read-Host "Supabase Project URL (https://<ref>.supabase.co)"
-     $env:SUPABASE_SERVICE_ROLE_KEY = Read-Host "Supabase Service Role Key"
-     $env:WSLENV = "DIRECT_URL/u:NEXT_PUBLIC_SUPABASE_URL/u:SUPABASE_SERVICE_ROLE_KEY/u"
-
-     wsl bash scripts/rehearse-prod-backup.sh
      ```
 
 3. **Explicit project-owner GO authorization** naming target project reference `vjwvvoczyuebtowbnuqf`, confirming the `REHEARSAL PASSED` report SHA-256, and approving the maintenance window.
@@ -198,7 +195,7 @@ npm run preflight:schema
 ### Post-migration verification & rollback discipline
 
 - **Smoke check:** Verify `/api/health` (`200 { ok: true }` — now gated on `_prisma_migrations` matching committed migrations), authenticated student `/dashboard` (`200`, active + historical legacy orders visible), `/orders` (`200` across canonical + legacy status filters), `/notifications` (`200`), and `/admin` (`200`, analytics cards rendered).
-- **If a migration statement fails mid-run:** **STOP immediately.** Do not manually edit `_prisma_migrations` or mark an unfinished migration `--applied`. Inspect `_prisma_migrations` (`finished_at IS NULL`) and live catalog state; if any partial DDL landed, restore the verified pre-migration `xeroxease-prod-${STAMP}.dump` archive cleanly (`pg_restore --clean --if-exists --no-owner --no-privileges`).
+- **If a migration statement fails mid-run:** **STOP immediately.** Do not manually edit `_prisma_migrations` or mark an unfinished migration `--applied`. Inspect `_prisma_migrations` (`finished_at IS NULL`) and live catalog state; if any partial DDL landed, restore the verified pre-migration `xeroxease-prod-public.dump` archive cleanly (`pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error`).
 - **Application rollback caveat:** PostgreSQL cannot drop enum values (`ALTER TYPE ... DROP VALUE` does not exist). Once rows using `ORDER_RECEIVED` / `ACCEPTED` / `READY_FOR_PICKUP` / `DELIVERED` / `REJECTED` are written, only application builds that include those enum labels (`77ce38c` or newer) can read those rows without Prisma enum deserialisation errors; rolling further back requires restoring the pre-migration dump.
 
 ## Data retention

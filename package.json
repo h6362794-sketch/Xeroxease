@@ -19,7 +19,7 @@
     "schema:check": "tsx scripts/verify-migrations.ts",
     "preflight:schema": "tsx scripts/check-schema-ready.ts",
     "backup:storage": "tsx scripts/backup-storage.ts",
-    "backup:rehearse": "bash scripts/rehearse-prod-backup.sh",
+    "backup:rehearse": "tsx scripts/rehearse-prod-backup.ts",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "postinstall": "prisma generate"
