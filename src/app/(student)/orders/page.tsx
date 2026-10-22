@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Button, Card, EmptyState, Input, Select, Skeleton } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorState, Input, Select, Skeleton } from "@/components/ui";
 import { PaymentStatusBadge, StatusBadge } from "@/components/status-badge";
-import { api } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
+import { statusLabel } from "@/lib/order-status";
 import { formatCurrencyINR, formatDateShort, timeAgo } from "@/lib/utils";
 import { Search, Package } from "lucide-react";
 
@@ -25,6 +26,7 @@ interface OrderRow {
 
 export default function MyOrdersPage() {
   const [orders, setOrders] = useState<OrderRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("ALL");
   const [page, setPage] = useState(1);
@@ -32,6 +34,7 @@ export default function MyOrdersPage() {
 
   const load = useCallback(async () => {
     setOrders(null);
+    setError(null);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: "10" });
       if (q.trim()) params.set("q", q.trim());
@@ -39,8 +42,9 @@ export default function MyOrdersPage() {
       const data = await api<{ orders: OrderRow[]; total: number }>(`/api/orders?${params}`);
       setOrders(data.orders);
       setTotal(data.total);
-    } catch {
+    } catch (err) {
       setOrders([]);
+      setError(err instanceof ApiError ? err.message : "Orders could not be loaded right now. Please try again.");
     }
   }, [q, status, page]);
 
@@ -68,13 +72,19 @@ export default function MyOrdersPage() {
         </div>
         <Select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label="Filter by status" className="sm:w-56">
           <option value="ALL">All statuses</option>
-          <option value="ORDER_RECEIVED">Order received</option>
-          <option value="ACCEPTED">Order accepted</option>
-          <option value="PRINTING">Printing</option>
-          <option value="READY_FOR_PICKUP">Ready for pickup</option>
-          <option value="DELIVERED">Delivered</option>
-          <option value="REJECTED">Not accepted</option>
-          <option value="CANCELLED">Cancelled</option>
+          <option value="ORDER_RECEIVED">{statusLabel("ORDER_RECEIVED")}</option>
+          <option value="ACCEPTED">{statusLabel("ACCEPTED")}</option>
+          <option value="PRINTING">{statusLabel("PRINTING")}</option>
+          <option value="READY_FOR_PICKUP">{statusLabel("READY_FOR_PICKUP")}</option>
+          <option value="DELIVERED">{statusLabel("DELIVERED")}</option>
+          <option value="REJECTED">{statusLabel("REJECTED")}</option>
+          <option value="CANCELLED">{statusLabel("CANCELLED")}</option>
+          <optgroup label="Earlier orders">
+            <option value="PAYMENT_PENDING">{statusLabel("PAYMENT_PENDING")}</option>
+            <option value="PAYMENT_UNDER_REVIEW">{statusLabel("PAYMENT_UNDER_REVIEW")}</option>
+            <option value="READY_FOR_COLLECTION">{statusLabel("READY_FOR_COLLECTION")}</option>
+            <option value="COMPLETED">{statusLabel("COMPLETED")}</option>
+          </optgroup>
         </Select>
       </div>
 
@@ -82,6 +92,10 @@ export default function MyOrdersPage() {
         <div className="space-y-3">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 rounded-2xl" />)}
         </div>
+      ) : error ? (
+        <Card>
+          <ErrorState title="Could not load orders" sub={error} onRetry={load} />
+        </Card>
       ) : orders.length === 0 ? (
         <Card>
           <EmptyState

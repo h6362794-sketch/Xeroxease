@@ -266,22 +266,44 @@ unreachable at build time, and would change production deployment configuration.
 **release step** (§7 step 5), not a build step.
 
 ### 8.4 Admin analytics is also affected
-`src/app/api/admin/analytics/route.ts` fires ~13 order/payment queries with almost no `select`
-projection, so admin analytics is very likely failing with the same `P2022`. It was not
-exercised (no admin session). The same migration fixes it.
+`src/app/api/admin/analytics/route.ts` filters orders by `ORDER_RECEIVED`, `ACCEPTED`,
+`READY_FOR_PICKUP`, `DELIVERED`, and `REJECTED` across `count()`, `aggregate()`, and
+`groupBy()`, failing on an unmigrated database with `SQLSTATE 22P02` (`invalid input value
+for enum "OrderStatus"`). `src/server/api-utils.ts` now maps `22P02` via `describeSchemaSkew`
+to `503 SCHEMA_OUTDATED` and `AdminDashboard` displays a safe retryable `ErrorState` instead
+of indefinite loading skeletons; applying both October 20 migrations resolves the underlying
+schema gap for both `/dashboard` and `/admin`.
 
 ### 8.5 Build/typecheck environment
-A clean typecheck and build require `binaries.prisma.sh` egress. Not available here, so items
-2, 3, 5 and 9 cannot pass in this sandbox regardless of the code.
+Local offline validation succeeds via `prisma generate --no-engine` + mocked Google Fonts,
+and GitHub Actions CI (`verify` + `migrations` on PostgreSQL 16 and 17) exercises full native
+Prisma engine downloads, `prisma migrate diff`, `npm run preflight:schema`, `pg_dump -Fc` /
+`pg_restore` backup-and-restore replay, and `next build`.
 
-### 8.6 Security gate — **open, unchanged**
-`GHSA-vfj7-8cjw-p6xm` remains high with no official patched version. No suppression,
-no fork, no audit downgrade was introduced.
+### 8.6 Security gate — **patched compatible advisories; `braces` remains open**
+`next` & `eslint-config-next` were upgraded `15.5.27 → 15.5.28` (`GHSA-2464-fhr4-w9xw`,
+`GHSA-p3m5-59mp-jv5r`) and `vitest` `4.1.11 → 4.1.12` (`GHSA-qxg6-89mg-rqv8`,
+`GHSA-xp26-3454-mjgp`), reducing total `npm audit` findings from `9` to `7` (`0` moderate,
+`0` production runtime vulnerabilities via `npm audit --omit=dev`). Dev-only
+`GHSA-vfj7-8cjw-p6xm` (`braces <= 3.0.3`) remains unpatched upstream without suppression,
+fake overrides, or lowered audit thresholds (`SECURITY.md` §12.7).
 
 ### 8.7 Residual risk after the fix
-Applying the migration fixes the schema, but nothing *in the pipeline* prevents a future
-deploy from again outrunning its schema. The new gate must be adopted as a release step
-(§8.3), and the `migrations` CI job should gain an applied-vs-committed check.
+`npm run preflight:schema` is now exercised automatically against both PostgreSQL 16 and 17
+in CI (`migrations` matrix job), and must also be run as a release gate (§7 step 5) before
+promoting future schema-dependent deployments.
+
+---
+
+## 10. Re-verification & Final Production Gate Update — 2026-10-22 (`main` at `77ce38c`, PR #18)
+
+- **Vercel Production (`xeroxease.vercel.app`):** Deployment `dpl_9zdBmDrc2N1yPEQc5icpuFpkuhrA` (`READY`, `PROMOTED`, `iad1`, Node `24.x`) serves `main` commit `77ce38c6930b9e1f7e608f2fc67f44f256f3eb81` (PR #16). `DATABASE_URL` and `DIRECT_URL` in Vercel are scoped strictly to `production` (`type: "sensitive"`), keeping Preview deployments isolated from live customer data.
+- **Supabase Production (`vjwvvoczyuebtowbnuqf`, `ap-northeast-1`, PostgreSQL `17.6`):** Read-only metadata inspection confirmed `_prisma_migrations` contains only `20261013000000_init`, `20261014000000_recovery_codes`, and `20261015000000_direct_upload_intents` (`finished_at` non-null, `rolled_back_at` null). Both `20261020000000_order_lifecycle_enum_values` and `20261020000100_order_lifecycle_payments_pricing` remain unapplied (`orders` has `31/40` columns; `4` live historical orders exist across `COMPLETED`, `PAYMENT_PENDING`, `PAYMENT_UNDER_REVIEW`, and `READY_FOR_COLLECTION`; private `documents` bucket holds `4` objects totaling `5,020,036` bytes; all `7` `pricing_config` keys are intact).
+- **Application & operations hardening in PR #18:**
+  1. `GET /api/health` now compares `_prisma_migrations` against `prisma/migrations` via `compareMigrations(...)` and returns sanitized `503 SCHEMA_OUTDATED` (`Retry-After: 10`, `requestId`) whenever migrations are pending or unrecognized instead of falsely reporting `200 { ok: true }` on `SELECT 1`.
+  2. Student (`/dashboard`, `/orders`, `/notifications`), Admin (`/admin`, `/admin/orders`, `/admin/payments`, `/admin/pricing`), and Landing (`PricingSection`) views all use explicit summary column selections, support canonical + legacy statuses (`COMPLETED`, `PAYMENT_PENDING`, `PAYMENT_UNDER_REVIEW`, `READY_FOR_COLLECTION`), and render interactive `<ErrorState ... onRetry />` UI on `503` / API failures rather than empty states or raw database errors.
+  3. Docker-free secret-safe backup & rehearsal tooling (`npm run backup:prod`, `npm run backup:rehearse-only`, and `npm run backup:rehearse` -> single authoritative runner `scripts/rehearse-prod-backup.ts` + `scripts/backup-storage.ts`) separates read-only Production backup/SHA-256 verification from isolated PostgreSQL 17 restore & migration rehearsal, scrubs Production credentials from Phase B child processes, enforces multi-layer target/cluster/empty-table safety locks, and documents Windows PowerShell (local PG 17), temporary cloud PG 17, and private GitHub Codespace workflows in [`DATABASE.md`](DATABASE.md).
+- **Production migration gate status: `BLOCKED` (HOLD maintained):** **Zero writes, migrations, env-var edits, merges, or Production deployments were executed.** Production migration remains strictly blocked until the operator completes `npm run backup:rehearse` from a private workstation with direct port-`5432` Session Pooler TLS access and provides explicit GO authorization.
 
 ---
 

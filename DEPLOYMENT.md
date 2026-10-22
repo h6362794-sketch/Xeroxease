@@ -105,8 +105,8 @@ Never run `prisma migrate reset` or `prisma db push --force-reset` against produ
 2. The `20261014000000_recovery_codes` migration is additive only, so rolling back the
    *code* while leaving the new table in place is safe: previous releases simply never
    read it. If you must undo it, write a new migration that drops it.
-3. Migrations are forward-only: rolling back code without rolling back the schema is safe as long as the previous code does not depend on a column the new migration added. If a migration must be undone, write a new migration that reverses it — never edit an applied migration file, and never `prisma migrate reset` a production database.
-3. Keep the previous build artifact available until the new release is verified.
+3. Migrations are forward-only: rolling back code without rolling back the schema is only safe if the target build understands every enum label already written to the database (for example, once `ORDER_RECEIVED` / `DELIVERED` orders exist after the October 20 migrations, never promote a pre-PR-#13 build without restoring the pre-migration `pg_dump -Fc` backup — see [`DATABASE.md`](DATABASE.md) §*Production Migration & Recovery Runbook*). Never edit an applied migration file, and never `prisma migrate reset` a production database.
+4. Keep the previous build artifact and verified pre-migration `pg_dump -Fc` backup available until the new release is verified.
 
 ## Option B — VPS / Docker (full control, local storage OK)
 

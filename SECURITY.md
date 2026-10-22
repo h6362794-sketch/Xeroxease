@@ -234,7 +234,7 @@ checklist** (things the code cannot enforce); 11.2 is what is simply not built y
 Run `npm run config:check` with `NODE_ENV=production` before every deploy to catch missing
 or obviously invalid configuration.
 
-## 12. Dependency vulnerability assessment (audited 2026-10-14)
+## 12. Dependency vulnerability assessment (audited 2026-10-14, patched & re-assessed 2026-10-22)
 
 `npm audit` reported **26** findings. Each was inspected individually rather than
 resolved with `npm audit fix --force`. Result: **26 → 17**, with no major-version
@@ -243,6 +243,15 @@ upgrade applied anywhere.
 > **Updated 2026-10-14 (second pass).** The Next.js/React upgrade described in
 > §12.2 has now landed (see §12.4). Current posture: **0 critical, 0 moderate, 0 low,
 > 7 high — and all 7 high entries are a single root advisory (`braces`)**. See §12.2.
+>
+> **Patched & re-assessed 2026-10-22 (§12.7).** Upgraded `next` (`15.5.27 → 15.5.28`),
+> `eslint-config-next` (`15.5.27 → 15.5.28`), and `vitest` (`4.1.11 → 4.1.12`), clearing
+> two new moderate `@vitest/mocker` advisories (`9 → 7` total `npm audit` entries;
+> `2 → 0` moderate) and two upstream Next.js security advisories (`GHSA-2464-fhr4-w9xw`,
+> `GHSA-p3m5-59mp-jv5r`). Production runtime audit (`npm audit --omit=dev`) reports
+> **0 vulnerabilities**. Full `npm audit` reports **0 critical, 0 moderate, 0 low,
+> 7 high**, all propagating from the single unpatched dev-only root advisory
+> `braces@3.0.3` (`GHSA-vfj7-8cjw-p6xm`). See **§12.6** and **§12.7**.
 
 ### 12.1 Fixed (safe, backward-compatible)
 
@@ -427,6 +436,39 @@ proof of owner-signed risk acceptance. `GHSA-vfj7-8cjw-p6xm` remains a launch
 blocker until officially resolved or the required owner-signed acceptance is
 recorded. The failing dependency-audit job must remain enforced; this investigation
 does not authorize a deployment or waive that gate.
+
+### 12.7 Dependency patch & re-assessment (2026-10-22)
+
+#### Summary of compatible patches applied (`package.json` & `package-lock.json`)
+
+| Package | Before (`77ce38c`) | After | Scope | Advisories fixed |
+|---|---|---|---|---|
+| `next` | `15.5.27` | **`15.5.28`** | `dependencies` (runtime + build) | Vendor Next.js release fixes: **`GHSA-2464-fhr4-w9xw`** (Critical: Unauthenticated RCE in Image Optimization API when SVG files are used; XeroxEase also keeps `dangerouslyAllowSVG: false`) and **`GHSA-p3m5-59mp-jv5r`** (High: DoS in App Router using Server Actions). |
+| `eslint-config-next` | `15.5.27` | **`15.5.28`** | `devDependencies` (lint) | Aligned lockstep with `next@15.5.28` (`@next/eslint-plugin-next@15.5.28`). |
+| `vitest` (`@vitest/mocker`) | `4.1.11` | **`4.1.12`** | `devDependencies` (test runner) | **`GHSA-qxg6-89mg-rqv8`** (Moderate, CVSS 4.7, `CWE-94`/`CWE-306`: Code injection via unauthenticated manual mock registration, `>=2.1.0-beta.7 <4.1.12`) and **`GHSA-xp26-3454-mjgp`** (Moderate, CVSS 5.9, `CWE-22`: Windows backslash traversal bypasses redirect allowlist, `>=4.1.11 <4.1.12`). |
+
+#### Exact before / after `npm audit` findings (verified 2026-10-22 after `npm ci`)
+
+| Audit scope | Before (`77ce38c`) | After (`15.5.28` / `4.1.12`) | Root advisories remaining |
+|---|---|---|---|
+| Production runtime (`npm audit --omit=dev`) | **0** vulnerabilities (`100` prod deps) | **0** vulnerabilities (`100` prod deps) | **None (`0`)** |
+| Full tree (`npm audit`, `586` total packages) | **9** (`0` critical, **7** high, **2** moderate, `0` low) | **7** (`0` critical, **7** high, **0** moderate, `0` low) | **1** (`braces` `GHSA-vfj7-8cjw-p6xm`, dev-only) |
+
+#### Re-assessment of remaining open finding (`braces@3.0.3`, `GHSA-vfj7-8cjw-p6xm` / `CVE-2026-93687`)
+
+- **Advisory metadata:** `braces <= 3.0.3` — stack-exhaustion denial of service through deeply nested brace patterns (`CWE-674`, CVSS 3.1 `7.5`, `AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H`). **First patched version: none** (`npm view braces version` is `3.0.3`, published `2024-05-21`; upstream repository `micromatch/braces` has no merged fix as of `2026-10-22`).
+- **Complete dependency paths in `package-lock.json` (all 7 audit entries trace to this single root advisory):**
+  1. `tailwindcss@3.4.19` (`dev`) → `chokidar@3.6.0` → `braces@3.0.3`
+  2. `tailwindcss@3.4.19` (`dev`) → `micromatch@4.0.8` → `braces@3.0.3`
+  3. `tailwindcss@3.4.19` (`dev`) → `fast-glob@3.3.3` → `micromatch@4.0.8` → `braces@3.0.3`
+  4. `eslint-config-next@15.5.28` (`dev`) → `@next/eslint-plugin-next@15.5.28` → `fast-glob@3.3.1` → `micromatch@4.0.8` → `braces@3.0.3`
+  *(Correction to §12.4: `@prisma/client` reaches `chokidar@4.0.3`, which depends only on `readdirp` and **not** on `braces`; `npm ls braces micromatch fast-glob --omit=dev` is completely empty.)*
+- **Why `npm audit` suggested breaking changes were rejected:**
+  - `tailwindcss@4.3.3` (`--force`): Does **not** clear `GHSA-vfj7-8cjw-p6xm` (**5 high** entries remain via `@next/eslint-plugin-next`, which pins `fast-glob@3.3.1` across all 15.x and 16.4.x releases) while replacing the Tailwind v3 engine/config (`tailwind.config.ts`, `@tailwind` directives, button cursor defaults, ring/shadow scales) and risking UI regressions across every page.
+  - `eslint-config-next@14.2.35` (`--force`): Incompatible SemVer major downgrade to Next.js 14 lint rules on a Next.js 15 / React 19 codebase.
+  - Fake `overrides`, unreviewed git forks, or `continue-on-error` on `audit`: Rejected so the CI `audit` job remains honest and cannot mask future advisories.
+- **Runtime reachability & build-only exposure:** Zero runtime reachability (`0` production vulnerabilities, zero imports in `src/`/`scripts/`/`prisma/`, zero occurrences shipped in `.next/`, and build/lint globs originate solely from committed `tailwind.config.ts` and `.eslintrc.json`).
+- **Follow-up exit criteria:** Refresh `package-lock.json` immediately (`npm update braces`) when `braces >= 3.0.4` is published (`micromatch@^4.0.8` requires `^3.0.3` and `chokidar@3.6.0` requires `~3.0.2`), or schedule a dedicated visual-regression-tested Tailwind v4 upgrade once `@next/eslint-plugin-next` drops `fast-glob@3.3.1`, unless formal owner-signed risk acceptance per §12.6 is recorded first.
 
 ## 13. Fixed defect: security headers were never applied
 

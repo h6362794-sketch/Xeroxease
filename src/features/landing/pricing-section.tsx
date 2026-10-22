@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Reveal } from "./landing-interactive";
 import { formatCurrencyINR } from "@/lib/utils";
-import { Skeleton } from "@/components/ui";
+import { ErrorState, Skeleton } from "@/components/ui";
 
 interface PublicPrice {
   key: string;
@@ -21,26 +21,23 @@ export function PricingSection() {
   const [rows, setRows] = useState<PublicPrice[] | null>(null);
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/pricing", { headers: { accept: "application/json" } })
-      .then((r) => {
-        if (!r.ok) throw new Error("pricing unavailable");
-        return r.json() as Promise<{ pricing: PublicPrice[] }>;
-      })
-      .then((data) => {
-        if (!cancelled) setRows(data.pricing);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setRows([]);
-          setFailed(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
+  const load = useCallback(async () => {
+    setRows(null);
+    setFailed(false);
+    try {
+      const r = await fetch("/api/pricing", { headers: { accept: "application/json" } });
+      if (!r.ok) throw new Error("pricing unavailable");
+      const data = (await r.json()) as { pricing: PublicPrice[] };
+      setRows(data.pricing);
+    } catch {
+      setRows([]);
+      setFailed(true);
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   return (
     <section id="pricing-section" className="mx-auto max-w-6xl px-4 sm:px-6 py-24">
@@ -56,11 +53,17 @@ export function PricingSection() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-busy="true" aria-label="Loading current prices">
             {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}
           </div>
+        ) : failed ? (
+          <div className="card">
+            <ErrorState
+              title="Current rates could not be loaded"
+              sub="Please try again in a moment or ask the print desk for current rates."
+              onRetry={load}
+            />
+          </div>
         ) : rows.length === 0 ? (
           <div className="card p-6 text-sm text-zinc-400">
-            {failed
-              ? "Current rates could not be loaded. Please check back shortly or ask the print desk."
-              : "Pricing is being configured. Please ask the print desk for current rates."}
+            Pricing is being configured. Please ask the print desk for current rates.
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

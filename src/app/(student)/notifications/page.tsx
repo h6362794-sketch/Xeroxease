@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Card, EmptyState, Skeleton, Button } from "@/components/ui";
-import { api } from "@/lib/api-client";
+import { useCallback, useEffect, useState } from "react";
+import { Card, EmptyState, ErrorState, Skeleton, Button } from "@/components/ui";
+import { api, ApiError } from "@/lib/api-client";
 import { cn, timeAgo } from "@/lib/utils";
 import { Bell } from "lucide-react";
 
@@ -16,23 +16,32 @@ interface NotificationItem {
 
 export default function NotificationsPage() {
   const [items, setItems] = useState<NotificationItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setItems(null);
+    setError(null);
+    try {
+      const d = await api<{ notifications: NotificationItem[] }>("/api/notifications?take=50");
+      setItems(d.notifications);
+      if (d.notifications.some((n) => !n.isRead)) {
+        api("/api/notifications", { method: "PATCH", json: { all: true } }).catch(() => {});
+      }
+    } catch (err) {
+      setItems([]);
+      setError(err instanceof ApiError ? err.message : "Notifications could not be loaded right now. Please try again.");
+    }
+  }, []);
 
   useEffect(() => {
-    api<{ notifications: NotificationItem[] }>("/api/notifications?take=50")
-      .then((d) => {
-        setItems(d.notifications);
-        if (d.notifications.some((n) => !n.isRead)) {
-          api("/api/notifications", { method: "PATCH", json: { all: true } }).catch(() => {});
-        }
-      })
-      .catch(() => setItems([]));
-  }, []);
+    load();
+  }, [load]);
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-extrabold text-white tracking-tight">Notifications</h1>
-        {items && items.length > 0 && (
+        {items && items.length > 0 && !error && (
           <Button variant="ghost" size="sm" onClick={() => api("/api/notifications", { method: "PATCH", json: { all: true } }).catch(() => {})}>
             Mark all read
           </Button>
@@ -40,6 +49,8 @@ export default function NotificationsPage() {
       </div>
       {items === null ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>
+      ) : error ? (
+        <Card><ErrorState title="Could not load notifications" sub={error} onRetry={load} /></Card>
       ) : items.length === 0 ? (
         <Card><EmptyState title="You're all caught up." sub="Order updates will appear here." icon={<Bell className="h-8 w-8" />} /></Card>
       ) : (

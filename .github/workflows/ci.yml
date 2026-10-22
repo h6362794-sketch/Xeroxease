@@ -25,10 +25,16 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      # `npm ci` runs `prisma generate` via postinstall, so the generated client is
-      # present before typecheck/build. No database is needed for that step.
+      # `npm ci` runs `prisma generate` via postinstall. Keep the schema check and
+      # client generation visible as CI steps as well, so failures are attributable.
       - name: Install dependencies
         run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate Prisma client
+        run: npx prisma generate
 
       # Cheap text-level drift check: fails if schema.prisma and the committed
       # migration SQL disagree on tables, columns, indexes or unique constraints.
@@ -50,12 +56,16 @@ jobs:
         run: npm run build
 
   migrations:
-    name: Migration check against a clean database
+    name: Migration check (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [16, 17]
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: xeroxease_ci
@@ -68,11 +78,13 @@ jobs:
       DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci"
       SESSION_SECRET: "ci-only-secret-value-that-is-at-least-32-chars"
       SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/xeroxease_ci_shadow"
-      # Opt-in for tests/recovery-concurrency.pg.test.ts. Set ONLY here: this is the
-      # only job with a real PostgreSQL service. The `verify` job also defines
-      # DATABASE_URL but has no database, so the flag keeps the integration test from
-      # running there.
+      # Opt-ins are set ONLY here: this is the only job with disposable PostgreSQL
+      # services. The `verify` job defines DATABASE_URL but has no database.
       PG_INTEGRATION_TESTS: "1"
+      # migration-replay.pg.test.ts only accepts loopback targets and creates/drops
+      # uniquely named scratch databases on this service.
+      PG_TEST_DSN: "postgresql://postgres:postgres@localhost:5432/postgres"
+      PG_REQUIRE_DUMP_REHEARSAL: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -82,19 +94,46 @@ jobs:
           cache: "npm"
       - run: npm ci
 
+      - name: Ensure native PostgreSQL ${{ matrix.postgres }} client tools (psql, pg_dump, pg_restore)
+        run: |
+          if [ "${{ matrix.postgres }}" = "17" ] && [ ! -x /usr/lib/postgresql/17/bin/pg_dump ] && [ -x /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh ]; then
+            sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+            sudo apt-get install -y postgresql-client-17
+          fi
+          if [ -d "/usr/lib/postgresql/${{ matrix.postgres }}/bin" ]; then
+            echo "/usr/lib/postgresql/${{ matrix.postgres }}/bin" >> "$GITHUB_PATH"
+          elif [ "$(pg_dump --version | awk '{print int($3)}')" -lt "${{ matrix.postgres }}" ]; then
+            CID="$(docker ps -q --filter publish=5432 | head -n1)"
+            test -n "$CID"
+            mkdir -p "$RUNNER_TEMP/pgbin"
+            printf '#!/usr/bin/env bash\nenv -u DOCKER_HOST docker exec -i "%s" psql "$@"\n' "$CID" > "$RUNNER_TEMP/pgbin/psql"
+            printf '#!/usr/bin/env bash\nenv -u DOCKER_HOST docker exec -i "%s" pg_dump "$@"\n' "$CID" > "$RUNNER_TEMP/pgbin/pg_dump"
+            printf '#!/usr/bin/env bash\nenv -u DOCKER_HOST docker exec -i "%s" pg_restore "$@"\n' "$CID" > "$RUNNER_TEMP/pgbin/pg_restore"
+            chmod +x "$RUNNER_TEMP/pgbin/psql" "$RUNNER_TEMP/pgbin/pg_dump" "$RUNNER_TEMP/pgbin/pg_restore"
+            echo "$RUNNER_TEMP/pgbin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Check disposable replay test prerequisites
+        run: |
+          test -n "${PG_TEST_DSN:-}"
+          command -v psql >/dev/null
+          command -v pg_dump >/dev/null
+          command -v pg_restore >/dev/null
+          psql --version
+          pg_dump --version
+
       - name: Create shadow database for drift detection
         run: psql "postgresql://postgres:postgres@localhost:5432/postgres" -c 'CREATE DATABASE xeroxease_ci_shadow;'
 
-      - name: Apply migrations
+      - name: Apply all migrations (PostgreSQL ${{ matrix.postgres }})
         run: npx prisma migrate deploy
 
       - name: Verify the migrations reproduce schema.prisma
-        # AUTHORITATIVE drift check: replays the migrations into a real PostgreSQL 16
-        # database and diffs the result against schema.prisma. Exits non-zero on any
-        # difference, so a schema change committed without a matching migration breaks
-        # the build. This is the check that proves schema/migration agreement — the
-        # text-level `npm run schema:check` is only a pre-flight and has previously
-        # passed while real drift existed.
+        # AUTHORITATIVE drift check: replays the migrations into a real PostgreSQL
+        # database (both 16 and 17 matrix legs) and diffs the result against schema.prisma.
+        # Exits non-zero on any difference, so a schema change committed without a
+        # matching migration breaks the build. The text-level `npm run schema:check`
+        # remains only a pre-flight.
         run: |
           npx prisma migrate diff \
             --from-migrations prisma/migrations \
@@ -105,6 +144,12 @@ jobs:
       - name: Confirm no pending migrations
         run: npx prisma migrate status
 
+      - name: Confirm runtime schema-readiness preflight passes
+        run: npm run preflight:schema
+
+      - name: Replay baseline and October 20 migrations (PostgreSQL ${{ matrix.postgres }})
+        run: npx vitest run tests/migration-replay.pg.test.ts --reporter=verbose
+
       # ---------------------------------------------------------------------
       # Real-database concurrency test.
       #
@@ -112,13 +157,63 @@ jobs:
       # in-memory Prisma stand-in, which cannot demonstrate database-level
       # serialisation. This runs `tests/recovery-concurrency.pg.test.ts`, which opens
       # genuinely independent Prisma clients and races them for a single recovery
-      # code against this PostgreSQL 16 container.
+      # code against each PostgreSQL matrix service.
       #
       # The test skips automatically when DATABASE_URL is unset, so it is a no-op in
       # environments without a database.
       # ---------------------------------------------------------------------
-      - name: Recovery-code concurrency (independent connections, PostgreSQL 16)
+      - name: Recovery-code concurrency (independent connections, PostgreSQL ${{ matrix.postgres }})
         run: npx vitest run tests/recovery-concurrency.pg.test.ts --reporter=verbose
+
+      - name: Verify Docker-free backup & isolated PostgreSQL 17 rehearsal workflow
+        if: matrix.postgres == 17
+        env:
+          DOCKER_HOST: "unix:///nonexistent-docker-disabled.sock"
+          PG17_REHEARSAL_SOURCE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/xe_prod_sim_ci"
+          PG17_REHEARSAL_TARGET_URL: "postgresql://postgres:postgres@127.0.0.1:5432/xe_rehearsal_target_ci"
+        run: |
+          psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE DATABASE xe_prod_sim_ci;
+          CREATE DATABASE xe_rehearsal_target_ci;
+          SQL
+          psql "$PG17_REHEARSAL_SOURCE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA auth;
+          CREATE SCHEMA vault;
+          CREATE SCHEMA graphql;
+          CREATE TABLE vault.secrets (id text primary key);
+          CREATE TABLE "_prisma_migrations" (
+            "id" VARCHAR(36) PRIMARY KEY,
+            "checksum" VARCHAR(64) NOT NULL,
+            "finished_at" TIMESTAMPTZ,
+            "migration_name" VARCHAR(255) NOT NULL,
+            "logs" TEXT,
+            "rolled_back_at" TIMESTAMPTZ,
+            "started_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+            "applied_steps_count" INTEGER NOT NULL DEFAULT 1
+          );
+          SQL
+          for m in 20261013000000_init 20261014000000_recovery_codes 20261015000000_direct_upload_intents; do
+            psql "$PG17_REHEARSAL_SOURCE_URL" -v ON_ERROR_STOP=1 -f "prisma/migrations/${m}/migration.sql"
+            psql "$PG17_REHEARSAL_SOURCE_URL" -v ON_ERROR_STOP=1 \
+              -c "INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) VALUES (md5('${m}')::uuid::text, md5('${m}'), now(), '${m}', 1);"
+          done
+          psql "$PG17_REHEARSAL_SOURCE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO users (id,email,email_norm,name,"passwordHash",role,is_active,failed_login_count,created_at,updated_at)
+          VALUES ('u1','a@example.test','a@example.test','Student A','$2a$04$x','STUDENT',true,0,now(),now());
+          INSERT INTO pricing_config (id,key,label,unit_price,category,updated_at) VALUES
+            ('p1','A4_BW','A4 B&W',2,'PRINTING',now()), ('p2','A4_COLOR','A4 Color',8,'PRINTING',now()),
+            ('p3','A3_BW','A3 B&W',5,'PRINTING',now()), ('p4','A3_COLOR','A3 Color',15,'PRINTING',now()),
+            ('p5','SPIRAL_BINDING','Spiral',30,'FINISHING',now()), ('p6','LAMINATION','Lamination',25,'FINISHING',now()),
+            ('p7','STAPLE','Staple',5,'FINISHING',now());
+          INSERT INTO orders (id,order_number,user_id,paper_size,color_mode,copies,total_pages,billable_pages,
+            price_per_page,finishing_fee,total_amount,status,payment_status,payment_ref,created_at,updated_at)
+          VALUES
+            ('o1','XE-2026-000001','u1','A4','BW',1,10,10,2.00,0.00,20.00,'COMPLETED','PAYMENT_CONFIRMED',NULL,now(),now()),
+            ('o2','XE-2026-000002','u1','A4','BW',1,5,5,2.00,0.00,10.00,'PAYMENT_PENDING','PAYMENT_PENDING',NULL,now(),now()),
+            ('o3','XE-2026-000003','u1','A4','COLOR',2,8,16,8.00,0.00,128.00,'PAYMENT_UNDER_REVIEW','PAYMENT_UNDER_REVIEW','UPI/R3',now(),now()),
+            ('o4','XE-2026-000004','u1','A4','BW',1,12,12,2.00,0.00,24.00,'READY_FOR_COLLECTION','PAYMENT_CONFIRMED',NULL,now(),now());
+          SQL
+          npx vitest run tests/rehearse-prod-backup.test.ts --reporter=verbose
 
   audit:
     name: Dependency audit (critical and high)
@@ -138,13 +233,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production runtime dependencies (moderate+)
+        run: npm audit --omit=dev --audit-level=moderate
+
       - name: Audit
         id: audit
         # No `continue-on-error`. The exit status is allowed to propagate so the
-        # result is honest. This job is EXPECTED TO FAIL while the documented
-        # Next.js App Router advisories remain open — see SECURITY.md §12.2 for the
-        # reachability analysis and the upgrade plan. Suppressing it to obtain a
-        # green badge would be exactly the wrong trade.
+        # result is honest. Production runtime dependencies must pass cleanly above;
+        # this full-tree step is EXPECTED TO FAIL while the upstream-unpatched
+        # dev-only `braces` advisory (GHSA-vfj7-8cjw-p6xm) remains open — see
+        # SECURITY.md §§12.6–12.7 for the reachability analysis and exit criteria.
+        # Suppressing it to obtain a green badge would be the wrong trade.
         run: |
           set +e
           npm audit --audit-level=high

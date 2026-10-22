@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Button, Card, Input, Skeleton, EmptyState } from "@/components/ui";
+import { Button, Card, Input, Skeleton, EmptyState, ErrorState } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api-client";
 import { formatCurrencyINR } from "@/lib/utils";
@@ -48,9 +48,9 @@ export function AdminPricing({ canEdit }: { canEdit: boolean }) {
       const data = await api<{ pricing: PriceRow[]; history: PriceHistory[] }>("/api/admin/pricing");
       setRows(data.pricing);
       setHistory(data.history ?? []);
-    } catch {
+    } catch (err) {
       setRows([]);
-      setError("Pricing could not be loaded. Please retry.");
+      setError(err instanceof ApiError ? err.message : "Pricing could not be loaded. Please retry.");
     }
   }, []);
 
@@ -109,15 +109,20 @@ export function AdminPricing({ canEdit }: { canEdit: boolean }) {
         </p>
       </div>
 
-      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
-
-      <Card className="space-y-5">
-        <PriceGroup title="Printing" rows={prints} canEdit={canEdit} edits={edits} setEdits={setEdits} />
-        <PriceGroup title="Finishing" rows={finishings} canEdit={canEdit} edits={edits} setEdits={setEdits} />
-        {canEdit && (
-          <div className="pt-2 border-t border-white/10 flex flex-wrap items-center gap-3">
-            <Button onClick={save} loading={busy} className="min-h-11">Save changes</Button>
-            <p className="text-[11px] text-zinc-500">
+      {error && rows.length === 0 ? (
+        <Card>
+          <ErrorState title="Could not load pricing" sub={error} onRetry={load} />
+        </Card>
+      ) : (
+        <>
+          {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+          <Card className="space-y-5">
+            <PriceGroup title="Printing" rows={prints} canEdit={canEdit} edits={edits} setEdits={setEdits} />
+            <PriceGroup title="Finishing" rows={finishings} canEdit={canEdit} edits={edits} setEdits={setEdits} />
+            {canEdit && (
+              <div className="pt-2 border-t border-white/10 flex flex-wrap items-center gap-3">
+                <Button onClick={save} loading={busy} className="min-h-11">Save changes</Button>
+                <p className="text-[11px] text-zinc-500">
               Applies to new orders only. Existing totals and their pricing snapshots never change.
             </p>
           </div>
@@ -143,6 +148,8 @@ export function AdminPricing({ canEdit }: { canEdit: boolean }) {
           </ul>
         )}
       </Card>
+        </>
+      )}
     </div>
   );
 }

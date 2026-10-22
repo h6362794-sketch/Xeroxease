@@ -15,15 +15,37 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const user = await requirePageUser();
 
+  // Explicit field projections select only columns rendered on the summary view
+  // (never adminNotes, collectionTokenHash, or full pricingSnapshot JSONB), while
+  // deliberately preserving canonical TERMINAL_STATUSES filtering rather than
+  // masking unapplied database migrations.
   const [activeOrder, recentOrders, stats, recovery] = await Promise.all([
     prisma.order.findFirst({
       where: { userId: user.id, status: { notIn: [...TERMINAL_STATUSES] } },
       orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        orderNumber: true,
+        paperSize: true,
+        colorMode: true,
+        totalPages: true,
+        status: true,
+      },
     }),
     prisma.order.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
       take: 5,
+      select: {
+        id: true,
+        orderNumber: true,
+        createdAt: true,
+        totalPages: true,
+        copies: true,
+        updatedAt: true,
+        totalAmount: true,
+        status: true,
+      },
     }),
     prisma.order.aggregate({ where: { userId: user.id }, _count: true, _sum: { totalAmount: true } }),
     getRecoveryCodeStatus(user.id),
@@ -149,7 +171,7 @@ export default async function DashboardPage() {
                     <span className="text-sm font-bold text-white">{formatCurrencyINR(Number(o.totalAmount))}</span>
                     <Badge
                       className={
-                        o.status === "COMPLETED"
+                        o.status === "COMPLETED" || o.status === "DELIVERED"
                           ? "text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
                           : "text-zinc-300 bg-white/5 border-white/10"
                       }

@@ -140,6 +140,124 @@ password) when the configuration is ambiguous or unsafe.
 - **Recovery**: restore the Postgres dump to a fresh Supabase project, update `DATABASE_URL`/`DIRECT_URL`, re-point storage to the restored bucket, run `npx prisma migrate deploy` to confirm schema state.
 - **Payment reconciliation**: `payment_events` + `orders.payment_ref` provide the reference trail to reconcile against bank/UPI statements.
 
+## Production Migration & Recovery Runbook (October 2026 Lifecycle Migrations)
+
+### Mandatory safety gate (STOP until every item passes)
+
+Do **not** execute `npx prisma migrate deploy` or write to the Production database until **all three** gates are complete and recorded:
+
+1. **Network & endpoint requirement (`DIRECT_URL` on port `5432`):**
+   - On Supabase Free tier, direct host `db.<project-ref>.supabase.co` publishes **IPv6 (`AAAA`) records only**. Operators on IPv4-only networks must use the **Supabase Session Pooler URI on port `5432`** (`postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require`), which supports IPv4 + IPv6, TLS 1.3, advisory locks, `pg_dump -Fc`, and `npx prisma migrate deploy`.
+   - **Never** use port `6543` (`?pgbouncer=true` transaction mode) for `pg_dump` or `prisma migrate deploy` — `scripts/rehearse-prod-backup.sh` rejects port `6543` automatically.
+
+2. **Docker-free secret-safe backup + Storage archive + isolated PG17 restore rehearsal (`npm run backup:rehearse`, `npm run backup:prod`, `npm run backup:rehearse-only`):**
+   **Docker is NOT required.** `scripts/rehearse-prod-backup.ts` cleanly separates Production backup operations from isolated PostgreSQL 17 test database operations:
+   - **Phase A (`npm run backup:prod` / automatic first phase of `npm run backup:rehearse`):** Connects **read-only** (`SET default_transaction_read_only = on`) over `DIRECT_URL` (port `5432`, never `6543` or `?pgbouncer=true`), exports `pg_dump --schema=public -Fc` outside the Git repository (`0700`/`0600`), archives the private `documents` Storage bucket into `<backupDir>/storage`, verifies `pg_restore --list` across all 14 `public` tables, verifies SHA-256 checksums across both `SHA256SUMS` files, confirms Production `_prisma_migrations` is unchanged, and saves `<backupDir>/backup-manifest.json`.
+   - **Phase B (`npm run backup:rehearse-only` / automatic second phase of `npm run backup:rehearse`):** Scrubs all Production credentials (`DIRECT_URL`, `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`) from child processes, verifies client tools are **PostgreSQL 17+**, validates `REHEARSAL_DATABASE_URL` against production project refs (`vjwvvoczyuebtowbnuqf` + dynamic URL refs), live PostgreSQL 17 version (`17.x`), live cluster `pg_control_system()` identity, explicit `REHEARSAL_CONFIRM_DISPOSABLE=YES_DISPOSABLE_TEST_DB`, and empty-table / `_xe_disposable_rehearsal.marker` guard, restores the verified dump, runs `npx prisma migrate deploy` strictly on the isolated test DB, verifies **legacy order digests, all 13 table row counts, `orders` + `pricing_config` totals, enum labels (`OrderStatus`, `PaymentMethod`, `NotificationType`), and `5:40:DELIVERED:UPI` convergence**, and writes `<backupDir>/rehearsal-report.json`.
+
+   #### Option A — Windows PowerShell with Local PostgreSQL 17 (Recommended, `$0`, No Docker)
+   Native PostgreSQL 17 on Windows uses ~30 MB RAM, requires no Hyper-V / WSL2 / hardware virtualization, and is automatically detected in `C:\Program Files\PostgreSQL\17\bin` (or via `$env:PG_BIN_DIR` for a no-admin portable ZIP):
+
+   ```powershell
+   # 1. Install PostgreSQL 17 once via winget (or see portable ZIP note below if without admin rights)
+   winget install --id PostgreSQL.PostgreSQL.17 -e
+
+   # 2. Create an empty disposable local test database once
+   $pgBin = "C:\Program Files\PostgreSQL\17\bin"
+   & "$pgBin\psql.exe" -U postgres -h 127.0.0.1 -p 5432 -d postgres -c "CREATE DATABASE xe_rehearsal_test;"
+
+   # 3. Check out PR #18 branch & install dependencies
+   git fetch origin arena/aa34e6b2-xeroxease; git checkout arena/aa34e6b2-xeroxease; git pull
+   npm ci
+
+   # 4A. Phase A — Read-only Production backup + private Storage archive + SHA-256 verification
+   $env:BACKUP_ROOT = "$HOME\xeroxease-backups\pre-oct20-migration"
+   $env:DIRECT_URL = Read-Host "Production Supabase Session Pooler URI (port 5432, no pgbouncer=true)"
+   $env:NEXT_PUBLIC_SUPABASE_URL = Read-Host "Production Supabase URL (https://vjwvvoczyuebtowbnuqf.supabase.co)"
+   $env:SUPABASE_SERVICE_ROLE_KEY = Read-Host "Production Supabase Service Role Key"
+   npm run backup:prod
+
+   # 4B. Clear Production credentials from session, then run Phase B isolated PG17 rehearsal ONLY
+   Remove-Item Env:DIRECT_URL, Env:NEXT_PUBLIC_SUPABASE_URL, Env:SUPABASE_SERVICE_ROLE_KEY -ErrorAction SilentlyContinue
+   $env:BACKUP_DIR = "$HOME\xeroxease-backups\pre-oct20-migration"
+   $env:REHEARSAL_DATABASE_URL = Read-Host "Local disposable PG17 URI (e.g. postgresql://postgres:<local-pw>@127.0.0.1:5432/xe_rehearsal_test)"
+   $env:REHEARSAL_CONFIRM_DISPOSABLE = "YES_DISPOSABLE_TEST_DB"
+   npm run backup:rehearse-only
+   ```
+   *(No-admin portable Windows PG 17.6.1 alternative: download `postgresql-17.6.1-x86_64-pc-windows-msvc.zip` from `https://github.com/theseus-rs/postgresql-binaries/releases/tag/17.6.1`, extract to `$HOME\pg17`, run `& "$HOME\pg17\bin\initdb.exe" -D "$HOME\pg17\data" -U postgres -A trust --encoding=UTF8`, `& "$HOME\pg17\bin\pg_ctl.exe" -D "$HOME\pg17\data" -l "$HOME\pg17\pg.log" -o "-p 55417" start`, `& "$HOME\pg17\bin\psql.exe" -U postgres -h 127.0.0.1 -p 55417 -d postgres -c "CREATE DATABASE xe_rehearsal_test;"`, set `$env:PG_BIN_DIR = "$HOME\pg17\bin"`, use port `55417` in `REHEARSAL_DATABASE_URL`, and stop afterwards with `& "$HOME\pg17\bin\pg_ctl.exe" -D "$HOME\pg17\data" stop`.)*
+
+   #### Option B — Temporary Isolated Cloud PostgreSQL 17 Instance (No Local PostgreSQL Server)
+   If you cannot run a local PostgreSQL 17 service, install only the PostgreSQL 17 client binaries (`psql`, `pg_dump`, `pg_restore` — e.g. `winget install --id PostgreSQL.PostgreSQL.17 -e` with service stopped, or set `$env:PG_BIN_DIR` to extracted EDB binaries) and target a **fresh, empty, temporary cloud PostgreSQL 17 database**:
+   - **Supported free options & cost/deletion disclosures (nothing is ever created automatically):**
+     - **Neon Free Plan (`$0/month` free tier — no credit card required):** Create a temporary PostgreSQL **17** project (`0.5 GB` storage / `100 CU-hours/month` included free; paid usage applies only if created on a paid plan). Copy the **Direct** (non-pooled, no `-pooler` hostname, `?sslmode=require`) connection string.
+     - **Separate Temporary Supabase Free Project (`$0/month` free tier):** Up to `2` active free projects per personal account (`$0`; creating additional projects inside a Pro organization incurs compute charges). Select **PostgreSQL 17**, wait for provisioning, and copy its **Session Pooler URI on port `5432`** (`postgres.<NEW-TEMP-REF>` — never `vjwvvoczyuebtowbnuqf`).
+     - **Mandatory post-rehearsal cleanup:** Because Phase B temporarily restores your production `public` schema/data copy into that cloud database to rehearse migrations, **permanently delete the temporary Neon project / temporary Supabase project in its dashboard immediately after `REHEARSAL PASSED`**, keeping only your local `$HOME\xeroxease-backups\pre-oct20-migration` folder + `rehearsal-report.json`.
+   - **Exact PowerShell commands (never paste credentials into files or chat):**
+     ```powershell
+     # Run Phase A first as shown in Step 4A above, clear Production env vars, then run Phase B:
+     Remove-Item Env:DIRECT_URL, Env:NEXT_PUBLIC_SUPABASE_URL, Env:SUPABASE_SERVICE_ROLE_KEY -ErrorAction SilentlyContinue
+     $env:BACKUP_DIR = "$HOME\xeroxease-backups\pre-oct20-migration"
+     $env:REHEARSAL_DATABASE_URL = Read-Host "Temporary EMPTY Cloud PG17 URI (port 5432, ?sslmode=require)"
+     $env:REHEARSAL_ALLOW_REMOTE_HOST = Read-Host "Exact hostname of temporary cloud PG17 URI"
+     $env:REHEARSAL_CONFIRM_DISPOSABLE = "YES_DISPOSABLE_TEST_DB"
+     npm run backup:rehearse-only
+     # Immediately delete the temporary cloud PG17 project in Neon/Supabase once REHEARSAL PASSED prints!
+     ```
+
+   #### Option C — Private Ephemeral GitHub Codespace (When Local Machine Cannot Install PG Client Tools)
+   > **Security warning for public repositories:** Never use GitHub Actions workflow artifacts to store database dumps or customer `documents` files on a public repository. A GitHub Codespace is a private single-user VM isolated to your GitHub account (`120 core-hours/month` & `15 GB-month` free on GitHub Free; standard per-hour billing applies only if your free monthly quota is exhausted — stop & **delete** the Codespace immediately after downloading your backup).
+
+   1. Open `https://github.com/h6362794-sketch/Xeroxease/tree/arena/aa34e6b2-xeroxease` -> **Code -> Codespaces -> Create codespace on `arena/aa34e6b2-xeroxease`**.
+   2. In the Codespace terminal:
+      ```bash
+      sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+      sudo apt-get install -y postgresql-17
+      sudo service postgresql start
+      sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'local_disposable_pw';"
+      sudo -u postgres psql -c "CREATE DATABASE xe_rehearsal_test;"
+      npm ci
+
+      export BACKUP_ROOT="$HOME/xeroxease-backups/pre-oct20-migration"
+      read -r -s -p "Production Session Pooler URI (port 5432): " DIRECT_URL && echo
+      read -r -p "Production Supabase URL: " NEXT_PUBLIC_SUPABASE_URL
+      read -r -s -p "Production Service Role Key: " SUPABASE_SERVICE_ROLE_KEY && echo
+      export DIRECT_URL NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY
+      export REHEARSAL_DATABASE_URL="postgresql://postgres:local_disposable_pw@127.0.0.1:5432/xe_rehearsal_test"
+      export REHEARSAL_CONFIRM_DISPOSABLE="YES_DISPOSABLE_TEST_DB"
+      npm run backup:rehearse
+
+      tar -czf "$HOME/xeroxease-backup-bundle.tar.gz" -C "$HOME/xeroxease-backups" pre-oct20-migration
+      chmod 600 "$HOME/xeroxease-backup-bundle.tar.gz"
+      ```
+   3. Download `$HOME/xeroxease-backup-bundle.tar.gz` directly to a restricted folder **outside** your Git repo on your PC, verify its SHA-256 locally (`Get-FileHash`), then **immediately delete the Codespace** under **GitHub -> Codespaces -> Delete**.
+
+3. **Explicit project-owner GO authorization** naming target project reference `vjwvvoczyuebtowbnuqf`, confirming the `REHEARSAL PASSED` report SHA-256, and approving the maintenance window.
+
+### Execution sequence (ONLY after all three gates pass)
+
+```bash
+# Precheck 1 — validate environment URL shapes without printing secrets
+NODE_ENV=production npm run config:check
+
+# Precheck 2 — confirm the exact two pending October 20 migrations (and zero failed rows)
+npx prisma migrate status
+
+# Apply pending migrations in order over DIRECT_URL (port 5432 session connection, never port 6543 transaction pooler)
+#   1. 20261020000000_order_lifecycle_enum_values (commits new enum labels in its own transaction)
+#   2. 20261020000100_order_lifecycle_payments_pricing (alters status default, creates PaymentMethod, adds 9 columns + composite index)
+npx prisma migrate deploy
+
+# Postcheck — must report 0 pending and 0 unknown migrations (exit code 0)
+npx prisma migrate status
+npm run preflight:schema
+```
+
+### Post-migration verification & rollback discipline
+
+- **Smoke check:** Verify `/api/health` (`200 { ok: true }` — now gated on `_prisma_migrations` matching committed migrations), authenticated student `/dashboard` (`200`, active + historical legacy orders visible), `/orders` (`200` across canonical + legacy status filters), `/notifications` (`200`), and `/admin` (`200`, analytics cards rendered).
+- **If a migration statement fails mid-run:** **STOP immediately.** Do not manually edit `_prisma_migrations` or mark an unfinished migration `--applied`. Inspect `_prisma_migrations` (`finished_at IS NULL`) and live catalog state; if any partial DDL landed, restore the verified pre-migration `xeroxease-prod-public.dump` archive cleanly (`pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error`).
+- **Application rollback caveat:** PostgreSQL cannot drop enum values (`ALTER TYPE ... DROP VALUE` does not exist). Once rows using `ORDER_RECEIVED` / `ACCEPTED` / `READY_FOR_PICKUP` / `DELIVERED` / `REJECTED` are written, only application builds that include those enum labels (`77ce38c` or newer) can read those rows without Prisma enum deserialisation errors; rolling further back requires restoring the pre-migration dump.
+
 ## Data retention
 
 - Configurable via Super Admin → Settings (`retentionDays`, default 30): completed-order files may be purged after N days while order metadata is retained for accounting.
