@@ -84,6 +84,7 @@ jobs:
       # migration-replay.pg.test.ts only accepts loopback targets and creates/drops
       # uniquely named scratch databases on this service.
       PG_TEST_DSN: "postgresql://postgres:postgres@localhost:5432/postgres"
+      PG_REQUIRE_DUMP_REHEARSAL: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -93,10 +94,26 @@ jobs:
           cache: "npm"
       - run: npm ci
 
+      - name: Ensure version-matched pg_dump and pg_restore for PostgreSQL ${{ matrix.postgres }}
+        run: |
+          if [ "$(pg_dump --version | awk '{print int($3)}')" -lt "${{ matrix.postgres }}" ]; then
+            CID="$(docker ps -q --filter publish=5432 | head -n1)"
+            test -n "$CID"
+            mkdir -p "$RUNNER_TEMP/pgbin"
+            printf '#!/usr/bin/env bash\nexec docker exec -i "%s" pg_dump "$@"\n' "$CID" > "$RUNNER_TEMP/pgbin/pg_dump"
+            printf '#!/usr/bin/env bash\nexec docker exec -i "%s" pg_restore "$@"\n' "$CID" > "$RUNNER_TEMP/pgbin/pg_restore"
+            chmod +x "$RUNNER_TEMP/pgbin/pg_dump" "$RUNNER_TEMP/pgbin/pg_restore"
+            echo "$RUNNER_TEMP/pgbin" >> "$GITHUB_PATH"
+          fi
+
       - name: Check disposable replay test prerequisites
         run: |
           test -n "${PG_TEST_DSN:-}"
           command -v psql >/dev/null
+          command -v pg_dump >/dev/null
+          command -v pg_restore >/dev/null
+          psql --version
+          pg_dump --version
 
       - name: Create shadow database for drift detection
         run: psql "postgresql://postgres:postgres@localhost:5432/postgres" -c 'CREATE DATABASE xeroxease_ci_shadow;'
@@ -119,6 +136,9 @@ jobs:
 
       - name: Confirm no pending migrations
         run: npx prisma migrate status
+
+      - name: Confirm runtime schema-readiness preflight passes
+        run: npm run preflight:schema
 
       - name: Replay baseline and October 20 migrations (PostgreSQL ${{ matrix.postgres }})
         run: npx vitest run tests/migration-replay.pg.test.ts --reporter=verbose
@@ -156,13 +176,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production runtime dependencies (moderate+)
+        run: npm audit --omit=dev --audit-level=moderate
+
       - name: Audit
         id: audit
         # No `continue-on-error`. The exit status is allowed to propagate so the
-        # result is honest. This job is EXPECTED TO FAIL while the documented
-        # Next.js App Router advisories remain open — see SECURITY.md §12.2 for the
-        # reachability analysis and the upgrade plan. Suppressing it to obtain a
-        # green badge would be exactly the wrong trade.
+        # result is honest. Production runtime dependencies must pass cleanly above;
+        # this full-tree step is EXPECTED TO FAIL while the upstream-unpatched
+        # dev-only `braces` advisory (GHSA-vfj7-8cjw-p6xm) remains open — see
+        # SECURITY.md §§12.6–12.7 for the reachability analysis and exit criteria.
+        # Suppressing it to obtain a green badge would be the wrong trade.
         run: |
           set +e
           npm audit --audit-level=high

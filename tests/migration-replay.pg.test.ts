@@ -31,7 +31,8 @@
 // environments where `prisma generate` cannot download a binary.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { compareMigrations } from "@/server/schema-readiness";
@@ -145,6 +146,29 @@ function psql(database: string, args: string[]): string {
   }
 }
 
+/** Run a binary PostgreSQL client tool (`pg_dump`/`pg_restore`) while redacting any URI on error. */
+function runPgBinaryTool(tool: string, args: string[], input?: Buffer): Buffer {
+  try {
+    return execFileSync(tool, args, {
+      input,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: PSQL_ENV,
+    });
+  } catch (error) {
+    const e = error as { stderr?: string | Buffer; message?: string };
+    const stderr = redactConnectionUri(String(e.stderr ?? e.message ?? ""));
+    throw Object.assign(new Error(stderr || `${tool} failed without diagnostic`), { stderr });
+  }
+}
+
+function majorVersionOfTool(tool: string): number | null {
+  const probe = spawnSync(tool, ["--version"], { encoding: "utf8", env: PSQL_ENV });
+  if (probe.status !== 0) return null;
+  const match = `${probe.stdout ?? ""}`.match(/(\d+)(?:\.\d+)?/);
+  return match ? Number(match[1]) : null;
+}
+
 /** Run psql, returning `{ ok, stderr }` instead of throwing. */
 function psqlFail(database: string, sql: string): { ok: boolean; stderr: string } {
   try {
@@ -158,7 +182,7 @@ function psqlFail(database: string, sql: string): { ok: boolean; stderr: string 
 
 function applyMigrations(database: string, names: string[]): void {
   for (const name of names) {
-    psql(database, ["-f", join(MIGRATIONS, name, "migration.sql")]);
+    psql(database, ["-1", "-f", join(MIGRATIONS, name, "migration.sql")]);
   }
 }
 
@@ -166,6 +190,8 @@ const suffix = `${process.pid}_${Date.now()}`;
 const BASELINE_DB = `xe_replay_baseline_${suffix}`;
 const FULL_DB = `xe_replay_full_${suffix}`;
 const DATA_DB = `xe_replay_data_${suffix}`;
+const RESTORE_DB = `xe_replay_restore_${suffix}`;
+let scratchDir: string | undefined;
 
 /** The three migrations production had applied before the incident. */
 const APPLIED_IN_PRODUCTION = [
@@ -186,7 +212,11 @@ const NEW_NOTIFICATION_LABELS = ["ORDER_REJECTED", "ORDER_ACCEPTED"];
 
 describe.skipIf(!enabled)("migration replay against a real PostgreSQL", () => {
   beforeAll(() => {
+    scratchDir = mkdtempSync(join(tmpdir(), "xe-pg-replay-"));
     const all = committedMigrations();
+    for (const db of [BASELINE_DB, FULL_DB, DATA_DB, RESTORE_DB]) {
+      psql("postgres", ["-c", `DROP DATABASE IF EXISTS "${db}" WITH (FORCE)`]);
+    }
     for (const db of [BASELINE_DB, FULL_DB, DATA_DB]) {
       psql("postgres", ["-c", `CREATE DATABASE "${db}"`]);
     }
@@ -196,12 +226,15 @@ describe.skipIf(!enabled)("migration replay against a real PostgreSQL", () => {
   });
 
   afterAll(() => {
-    for (const db of [BASELINE_DB, FULL_DB, DATA_DB]) {
+    for (const db of [BASELINE_DB, FULL_DB, DATA_DB, RESTORE_DB]) {
       try {
         psql("postgres", ["-c", `DROP DATABASE IF EXISTS "${db}" WITH (FORCE)`]);
       } catch {
         // Best effort: a leftover scratch database must never fail the suite.
       }
+    }
+    if (scratchDir) {
+      rmSync(scratchDir, { recursive: true, force: true });
     }
   });
 
@@ -402,6 +435,44 @@ describe.skipIf(!enabled)("migration replay against a real PostgreSQL", () => {
 
     const pending = committedMigrations().filter((name) => !APPLIED_IN_PRODUCTION.includes(name));
     expect(pending.slice(0, OCTOBER_20_MIGRATIONS.length)).toEqual(OCTOBER_20_MIGRATIONS);
+
+    // Rehearse a full custom-format dump (`pg_dump -Fc`) and isolated restore (`pg_restore`)
+    // before mutating DATA_DB, then migrate BOTH the restored copy and DATA_DB and verify
+    // identical checksums and row counts across every table.
+    const serverMajor = Math.floor(
+      Number(psql(DATA_DB, ["-tAc", "SELECT current_setting('server_version_num')::int"]).trim()) / 10000
+    );
+    const dumpMajor = majorVersionOfTool("pg_dump");
+    const restoreMajor = majorVersionOfTool("pg_restore");
+    const requireDump = process.env.PG_REQUIRE_DUMP_REHEARSAL === "1";
+    if (requireDump && (!dumpMajor || !restoreMajor || dumpMajor < serverMajor)) {
+      throw new Error(
+        `PG_REQUIRE_DUMP_REHEARSAL=1 requires pg_dump/pg_restore >= ${serverMajor} (found dump=${dumpMajor}, restore=${restoreMajor})`
+      );
+    }
+    if (dumpMajor && restoreMajor && dumpMajor >= serverMajor) {
+      const dumpPath = join(scratchDir as string, "pre-migration.dump");
+      const archive = runPgBinaryTool("pg_dump", [
+        "--dbname",
+        withDatabase(DSN as string, DATA_DB),
+        "-Fc",
+        "--no-owner",
+        "--no-privileges",
+      ]);
+      expect(archive.byteLength).toBeGreaterThan(0);
+      writeFileSync(dumpPath, archive);
+      psql("postgres", ["-c", `CREATE DATABASE "${RESTORE_DB}"`]);
+      runPgBinaryTool(
+        "pg_restore",
+        ["--dbname", withDatabase(DSN as string, RESTORE_DB), "--no-owner", "--no-privileges"],
+        readFileSync(dumpPath)
+      );
+      expect(psql(RESTORE_DB, ["-tAc", snapshotSql]).trim()).toBe(before);
+
+      applyMigrations(RESTORE_DB, pending);
+      expect(psql(RESTORE_DB, ["-tAc", snapshotSql]).trim()).toBe(before);
+    }
+
     applyMigrations(DATA_DB, pending);
 
     const after = psql(DATA_DB, ["-tAc", snapshotSql]).trim();
@@ -420,7 +491,7 @@ describe.skipIf(!enabled)("migration replay against a real PostgreSQL", () => {
     ).toBe(2);
   });
 
-  it("drives the release gate from real recorded history", () => {
+  it("drives the release gate from real recorded history and rejects incomplete or rolled-back entries", () => {
     // `npm run preflight:schema` reads `_prisma_migrations` and hands the names to
     // `compareMigrations`. This exercises that decision path against a real history
     // table, so the gate's verdict is validated even where the Prisma *client* cannot
@@ -436,6 +507,12 @@ describe.skipIf(!enabled)("migration replay against a real PostgreSQL", () => {
         `INSERT INTO "_prisma_migrations" (id,checksum,finished_at,migration_name,started_at,applied_steps_count)
          VALUES (gen_random_uuid()::text,'x',now(),'${name}',now(),1)`]);
     }
+    // Simulate a migration whose SQL failed mid-run (`finished_at IS NULL`, `rolled_back_at IS NULL`):
+    // it MUST NOT be counted as applied by `_prisma_migrations` queries.
+    psql(BASELINE_DB, ["-c", `
+      INSERT INTO "_prisma_migrations" (id,checksum,finished_at,migration_name,logs,started_at,applied_steps_count)
+      VALUES (gen_random_uuid()::text,'x',NULL,'20261020000000_order_lifecycle_enum_values','ERROR: statement aborted',now(),0)
+    `]);
 
     const recorded = rows(
       BASELINE_DB,
@@ -450,23 +527,50 @@ describe.skipIf(!enabled)("migration replay against a real PostgreSQL", () => {
     ]);
     expect(readiness.unknownApplied).toEqual([]);
 
-    // A rolled-back or unfinished row must not count as applied.
+    // A rolled-back row must not count as applied either.
     psql(BASELINE_DB, ["-c", `UPDATE "_prisma_migrations" SET rolled_back_at = now()`]);
     expect(
       rows(BASELINE_DB, "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL")
     ).toEqual([]);
   });
 
-  it("uses the new lifecycle default for orders created after migration", () => {
+  it("uses the new lifecycle default and supports new payment, pricing snapshot, finishing, and notification values", () => {
     psql(FULL_DB, ["-c", `
       INSERT INTO users (id,email,email_norm,name,"passwordHash",role,is_active,created_at,updated_at)
-      VALUES ('u-new','n@example.test','n@example.test','N','h','STUDENT',true,now(),now());
+      VALUES ('u-new','n@example.test','n@example.test','N','h','STUDENT',true,now(),now()),
+             ('u-adm','adm@example.test','adm@example.test','Admin','h','ADMIN',true,now(),now());
       INSERT INTO orders (id,order_number,user_id,paper_size,color_mode,copies,total_pages,billable_pages,
         price_per_page,finishing_fee,total_amount,created_at,updated_at)
       VALUES ('o-new','XE-NEW-1','u-new','A4','BW',1,1,1,2.5,0,2.5,now(),now());
+      INSERT INTO orders (id,order_number,user_id,paper_size,color_mode,copies,total_pages,billable_pages,
+        price_per_page,finishing_fee,total_amount,status,payment_method,accepted_at,accepted_by,
+        delivered_at,pricing_snapshot,finishing_options,created_at,updated_at)
+      VALUES ('o-life','XE-NEW-2','u-new','A4','COLOR',2,5,10,8.0,40.0,120.0,'DELIVERED','UPI',
+        now(),'u-adm',now(),'{"rateKey":"A4_COLOR","perPage":8,"finishing":["SPIRAL"]}'::jsonb,
+        ARRAY['SPIRAL','STAPLE'],now(),now());
+      INSERT INTO orders (id,order_number,user_id,paper_size,color_mode,copies,total_pages,billable_pages,
+        price_per_page,finishing_fee,total_amount,status,payment_method,rejected_at,rejected_by,
+        rejection_reason,created_at,updated_at)
+      VALUES ('o-rej','XE-NEW-3','u-new','LEGAL','BW',1,3,3,3.0,0.0,9.0,'REJECTED','CASH_ON_DELIVERY',
+        now(),'u-adm','Corrupted scan pages',now(),now());
+      INSERT INTO notifications (id,user_id,type,title,body,created_at)
+      VALUES ('n-acc','u-new','ORDER_ACCEPTED','Accepted','Order accepted',now()),
+             ('n-rej','u-new','ORDER_REJECTED','Rejected','Order rejected',now());
     `]);
     expect(psql(FULL_DB, ["-tAc", "SELECT status::text FROM orders WHERE id='o-new'"]).trim()).toBe("ORDER_RECEIVED");
     expect(psql(FULL_DB, ["-tAc", "SELECT cardinality(finishing_options) FROM orders WHERE id='o-new'"]).trim()).toBe("0");
+    expect(
+      rows(
+        FULL_DB,
+        "SELECT status::text, payment_method::text, pricing_snapshot->>'rateKey', array_to_string(finishing_options, ',') FROM orders WHERE id='o-life'"
+      )[0]
+    ).toEqual(["DELIVERED", "UPI", "A4_COLOR", "SPIRAL,STAPLE"]);
+    expect(
+      rows(FULL_DB, "SELECT status::text, payment_method::text, rejection_reason FROM orders WHERE id='o-rej'")[0]
+    ).toEqual(["REJECTED", "CASH_ON_DELIVERY", "Corrupted scan pages"]);
+    expect(
+      rows(FULL_DB, "SELECT type::text FROM notifications WHERE id IN ('n-acc','n-rej') ORDER BY id").map((r) => r[0])
+    ).toEqual(["ORDER_ACCEPTED", "ORDER_REJECTED"]);
   });
 });
 
