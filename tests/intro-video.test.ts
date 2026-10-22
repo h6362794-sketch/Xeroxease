@@ -70,13 +70,18 @@ describe("intro assets", () => {
 
 describe("orientation-aware presentation", () => {
   const css = readFileSync(path.join(root, "src/app/globals.css"), "utf8");
-  it("fits both ratios against the available stage with dynamic viewport sizing", () => {
+  it("fits the 16:9 source video against the full viewport stage in both orientations without side-cropping", () => {
+    expect(css).toContain("height: 100vh");
     expect(css).toContain("height: 100dvh");
     expect(css).toContain("container-type: size");
     expect(css).toContain("aspect-ratio: 16 / 9");
-    expect(css).toContain("(max-width: 767px) and (orientation: portrait)");
-    expect(css).toContain("aspect-ratio: 9 / 16");
-    expect(css).toContain("calc(100cqh * 9 / 16)");
+    expect(css).toContain("width: min(100cqw, calc(100cqh * 16 / 9))");
+    expect(css).toContain("height: min(100cqh, calc(100cqw * 9 / 16))");
+    expect(css).not.toContain("aspect-ratio: 9 / 16");
+    expect(css).not.toContain("calc(100cqh * 9 / 16)");
+  });
+  it("overlays branding so the video stage occupies the full viewport without shrinking desktop 16:9 screens", () => {
+    expect(code).toContain("pointer-events-none absolute inset-x-0 bottom-0");
   });
   it("retains one video across CSS orientation changes and isolates modal focus", () => {
     expect(code.match(/<video\b/g)).toHaveLength(1);

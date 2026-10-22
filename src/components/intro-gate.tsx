@@ -11,9 +11,11 @@ let introDismissed = false;
 /**
  * Opening experience: plays the user-provided XeroxEase intro animation.
  *
- * Fit: the video is `object-contain` inside a full-viewport, overflow-hidden
- * layer, so the whole composition stays visible on phones, tablets and desktops
- * in portrait and landscape — never cropped, stretched or spilling sideways.
+ * Fit: the 16:9 (1280x720) video uses `object-contain` inside a full-viewport,
+ * overflow-hidden stage so the complete composition stays visible on phones,
+ * tablets and desktops in portrait and landscape — filling 16:9 desktop screens
+ * edge-to-edge and spanning the full width on portrait mobile screens without
+ * side-cropping, stretching or horizontal overflow.
  * Safe-area insets keep the Skip button and branding clear of notches/home bars.
  *
  * Graceful fallbacks: a poster image while loading, an explicit brand panel if
@@ -113,10 +115,9 @@ export function IntroGate({ children }: { children: React.ReactNode }) {
               {!playbackFailed ? (
                 <video
                   ref={videoRef}
-                  // `object-contain` is deliberate: the intro composition must remain
-                  // fully visible. `object-cover` used to crop it on narrow screens.
-                  // The stage is sized above the branding strip; CSS changes its
-                  // presentation ratio without replacing the source or playhead.
+                  // `object-contain` is deliberate: the 16:9 intro composition must
+                  // remain fully visible without side-cropping on narrow screens while
+                  // filling the full viewport stage cleanly on desktop and landscape.
                   className="intro-frame relative z-0 object-contain bg-black"
                   src="/brand/xeroxease-intro.mp4"
                   poster="/brand/xeroxease-logo.jpeg"
@@ -147,10 +148,9 @@ export function IntroGate({ children }: { children: React.ReactNode }) {
                   </Button>
                 </div>
               )}
-
             </div>
 
-            <div className="absolute right-4 top-[max(1rem,env(safe-area-inset-top))] z-10 sm:right-6">
+            <div className="absolute right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] z-10 sm:right-[max(1.5rem,env(safe-area-inset-right))]">
               <Button
                 variant="ghost"
                 size="md"
@@ -165,7 +165,7 @@ export function IntroGate({ children }: { children: React.ReactNode }) {
             </div>
 
             <motion.div
-              className="relative z-10 flex shrink-0 flex-col items-center gap-1 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 text-center"
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-1 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 text-center"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.8, duration: 0.5 }}
