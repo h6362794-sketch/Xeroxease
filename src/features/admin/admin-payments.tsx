@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Button, Card, EmptyState, Modal, Skeleton, Textarea, Label } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorState, Modal, Skeleton, Textarea, Label } from "@/components/ui";
 import { PaymentStatusBadge, StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api-client";
@@ -58,9 +58,9 @@ export function AdminPayments() {
     try {
       const data = await api<{ orders: PaymentRow[] }>(`/api/admin/payments?state=${state}`);
       setRows(data.orders);
-    } catch {
+    } catch (err) {
       setRows([]);
-      setError("Payments could not be loaded. Please retry.");
+      setError(err instanceof ApiError ? err.message : "Payments could not be loaded. Please retry.");
     }
   }, [state]);
 
@@ -132,11 +132,14 @@ export function AdminPayments() {
         <div className="space-y-3" aria-busy="true" aria-label="Loading payments">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
         </div>
+      ) : error ? (
+        <Card>
+          <ErrorState title="Could not load payments" sub={error} onRetry={load} />
+        </Card>
       ) : rows.length === 0 ? (
         <Card>
           <EmptyState
-            title={error ?? (state === "PENDING_REVIEW" ? "No payments waiting for review." : "Nothing here.")}
-            sub={error ? "Retry to reload the queue." : undefined}
+            title={state === "PENDING_REVIEW" ? "No payments waiting for review." : "Nothing here."}
             icon={<BadgeCheck className="h-8 w-8" />}
           />
         </Card>

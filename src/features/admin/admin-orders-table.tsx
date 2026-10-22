@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Button, Card, EmptyState, Input, Select, Skeleton } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorState, Input, Select, Skeleton } from "@/components/ui";
 import { StatusBadge, PaymentStatusBadge } from "@/components/status-badge";
-import { api } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
 import { formatCurrencyINR, formatDateShort, timeAgo } from "@/lib/utils";
-import { Search, Eye, Printer, RefreshCw } from "lucide-react";
+import { Search, Eye, Printer } from "lucide-react";
 import { statusLabel } from "@/lib/order-status";
 import { paymentMethodLabel } from "@/lib/status-meta";
 
@@ -36,6 +36,8 @@ const STATUS_OPTIONS = [
   "DELIVERED",
   "REJECTED",
   "CANCELLED",
+  "PAYMENT_PENDING",
+  "PAYMENT_UNDER_REVIEW",
   "READY_FOR_COLLECTION",
   "COMPLETED",
 ];
@@ -72,9 +74,9 @@ export function AdminOrdersTable() {
       const data = await api<{ orders: AdminOrder[]; total: number }>(`/api/admin/orders?${params}`);
       setOrders(data.orders);
       setTotal(data.total);
-    } catch {
+    } catch (err) {
       setOrders([]);
-      setError("Orders could not be loaded. Please retry.");
+      setError(err instanceof ApiError ? err.message : "Orders could not be loaded. Please retry.");
     }
   }, [q, status, paymentStatus, page]);
 
@@ -128,11 +130,7 @@ export function AdminOrdersTable() {
         </div>
       ) : error ? (
         <Card>
-          <EmptyState
-            title="Could not load orders"
-            sub={error}
-            icon={<RefreshCw className="h-8 w-8" />}
-          />
+          <ErrorState title="Could not load orders" sub={error} onRetry={load} />
         </Card>
       ) : orders.length === 0 ? (
         <Card><EmptyState title="No orders match your filters." /></Card>
