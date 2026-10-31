@@ -1,3 +1,4 @@
+```tsx
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
@@ -13,6 +14,11 @@ export const metadata: Metadata = {
     template: `%s · ${BRAND.name}`,
   },
   description: BRAND.description,
+
+  verification: {
+    google: "cNtSMiwfjchkn07ffWShR1O6b9El29dp2aK7YUA1UTk",
+  },
+
   openGraph: {
     title: `${BRAND.name} — ${BRAND.tagline}`,
     description: BRAND.description,
@@ -43,3 +49,4 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
+```
